@@ -2191,7 +2191,8 @@ Warnings/blockers found:
 
 - The project still has no authored project `.umap` asset under `Content` and no project `GameDefaultMap`, so direct-connect still uses `/Engine/Maps/Templates/OpenWorld` as a fallback.
 - Startup logs include repeated engine warnings/errors about missing VisionOS editor icon files and `FBodyInstance::GetSimplePhysicalMaterial` during native CDO construction. These appeared in both host and client startup logs and were not fixed in this pass because they did not block direct connection and are outside the direct-connect scaffold symptom fixed here.
-- Before moving toward Steam/lobby work, the lowest-risk cleanup is to replace the engine OpenWorld fallback with a real project startup map/default-map configuration and do one more packaged/direct-connect readiness pass.
+- Snapped staff segment authority/readability remains the last major gameplay scaffold that has been intentionally deferred. Before moving toward Steam/lobby work or map/default-map polish, the next pass should add the smallest server-owned snapped segment scaffold without attempting full loose physics replication.
+- The project still needs a later cleanup to replace the engine OpenWorld fallback with a real project startup map/default-map configuration.
 
 What remains authoritative:
 
@@ -2233,35 +2234,46 @@ Recommended next Codex prompt for the next online code spike:
 ```text
 Project rules:
 - This is Wizard's Staff, currently a locked local multiplayer prototype.
-- Continue the online multiplayer spike with a pre-Steam direct-connect readiness/configuration pass only.
+- Continue the online multiplayer spike with server-authoritative snapped staff segment replication/readability scaffolding only.
 - Do not add Steam lobbies, matchmaking, public lobby browser, friend invites, a third Trial, new spells, new powerups, Hammer Time, final UI, cosmetics, progression, or gameplay retuning.
 - Preserve local one-human-versus-bot and local couch multiplayer workflows.
-- Keep the current online scaffolding for GameState/PlayerState, explicit prototype session mode, movement, staff count, Slosh/Stress, pickups, rewards, Use Reward, server-owned Arcane Pinball gameplay projectile, Quick Bonk, ring-out/respawn, Staff Clash, Mega Staff, Grand Wizard Final readable/steal state, rematch/reset cleanup, actor lifecycle cleanup, replicated event feed, and direct-connect preparation working.
-- Do not add Steam sessions, lobby UI, matchmaking, production UI, prediction, rewind, lag compensation, loose physics replication, new Trials, new spells, new rewards, or new powerups.
+- Keep the current online scaffolding for GameState/PlayerState, explicit prototype session mode, movement, staff count, Slosh/Stress, pickups, rewards, Use Reward, server-owned Arcane Pinball gameplay projectile, Quick Bonk, ring-out/respawn, Staff Clash, Staffs powerup/Mega Staff, Grand Wizard Final readable/steal state, rematch/reset cleanup, actor lifecycle cleanup, replicated event feed, and direct-connect preparation working.
+- Do not add Steam sessions, lobby UI, matchmaking, production UI, prediction, rewind, lag compensation, exact loose physics replication, new Trials, new spells, new rewards, or new powerups.
 - Keep changes small and build after changes.
 
 Goal:
-Replace the current engine OpenWorld fallback with the smallest safe project-owned startup map/default-map configuration for direct-connect testing, then run a quick separate-process direct-connect sanity check to confirm the already-passing full loop still launches cleanly.
+Create the smallest safe server-owned snapped staff segment scaffold so staff segment loss/snap decisions are authoritative, replicated staff count/readability stays correct, and clients can see readable snapped-segment results without client-side segment authority or loose physics replication.
 
 Requirements:
-1. Create or configure the smallest project-owned prototype map/default map needed for direct-connect launch instead of relying on `/Engine/Maps/Templates/OpenWorld`.
-2. Keep runtime Party Hall, Mug Run, Staffs at Dawn, Grand Wizard Final, and rematch behavior unchanged.
-3. Preserve standalone local PIE, one-human-versus-bot, local couch multiplayer, shared camera, keyboard fallback, and playtest bot fill.
-4. Preserve the human-observed clean direct-connect behavior: top-down cameras, no extra bots/players, client controls only its wizard, input locks feel correct, and the full Party Hall -> Mug Run -> Staffs at Dawn -> Grand Wizard Final loop passes.
-5. Keep direct-connect host/client commands simple and non-Steam.
-6. Do not add Steam sessions, lobby UI, matchmaking, prediction, rewind, lag compensation, new Trials, new spells, new rewards, or new powerups.
-7. Build after changes.
-8. Run or document a quick direct-connect sanity check after the map/default-map change.
+1. Server owns all staff segment snap/loss decisions in networked play; clients must not declare snaps, grant/removal counts, score, Favor, knockback, or stress changes.
+2. Reuse existing local snap/stress/segment-removal logic where safe, without retuning snap thresholds, stress relief, staff growth, knockback, scoring, or Favor.
+3. Preserve standalone local snapping behavior, local one-human-versus-bot, local couch multiplayer, local shared camera, keyboard fallback, and playtest bot fill.
+4. Replicate only the smallest readable snapped segment state needed, such as snap sequence, latest snapped owner/slot, segment count after snap, and short-lived visual/readability cues.
+5. Keep `ReplicatedStaffSegmentCount` as the primary staff length/readability source and make sure it updates after server-owned snaps, ring-outs, Mega Staff expiration, and resets.
+6. Do not replicate loose snapped segment physics, exact cross-client debris motion, prediction, rewind, lag compensation, or final VFX.
+7. Clear snapped segment readability safely on Trial transition, ring-out/respawn, Mega Staff cleanup, Grand Wizard Final setup, rematch/reset, full party restart, and wizard destruction/end play.
+8. Audit authority boundaries so remote clients cannot force snaps, segment loss, stress relief, staff growth, score, Favor, ring-out attribution, or stale snapped-segment events.
+9. Keep direct-connect host/client commands simple and non-Steam.
+10. Build after changes and run or document a focused two-client/direct-connect snap-readability smoke test if practical.
 
 After implementation:
-- Explain the map/default-map configuration change.
-- Explain what was tested in separate-process direct-connect after the change.
+- Explain how server-owned snapped segment scaffolding works.
+- Explain what snapped segment state replicates and what remains visual-only.
+- Explain how staff count/readability updates after snaps.
+- Explain how loose physics replication remains intentionally deferred.
+- Explain how local snapping behavior was preserved.
+- Explain what was tested in PIE or separate-process direct-connect.
 - Be explicit about whether direct-connect host/client was actually rerun.
-- Explain every concrete direct-connect or map-launch bug fixed.
+- Explain every concrete snapped segment authority/readability bug fixed.
 - Explain what was audited and left unchanged.
-- Explain how local mode was preserved.
-- Explain how to rerun both PIE listen-server and direct-connect smoke tests.
+- Explain how to rerun the snapped segment smoke test.
 - List all files created or modified.
+```
+
+Follow-up recommendation after snapped segment scaffolding is stable:
+
+```text
+Do the pre-Steam direct-connect readiness/configuration pass: replace the engine OpenWorld fallback with the smallest safe project-owned startup map/default-map configuration, then rerun a quick direct-connect sanity check.
 ```
 
 Fallback recommendation if direct-connect fails before gameplay begins:
