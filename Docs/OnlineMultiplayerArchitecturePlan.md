@@ -2167,13 +2167,16 @@ What Codex did not directly observe:
 
 Follow-up human-observed validation:
 
-- A human-observed separate-process direct-connect smoke test was run after the host/client pair launched.
+- A human-observed separate-process direct-connect full-loop smoke test was run after the host/client pair launched.
 - Both windows had the expected top-down camera.
 - No extra bots or players appeared.
 - The client could control only its own wizard.
 - Countdown/input lock behavior felt correct.
 - Mug Run started after both players were present.
-- No direct-connect gameplay bugs or issues were observed during this smoke pass.
+- Mug Run passed in direct-connect.
+- Staffs at Dawn passed in direct-connect.
+- Grand Wizard Final passed in direct-connect.
+- The observed Party Hall -> Mug Run -> Staffs at Dawn -> Grand Wizard Final loop completed without reported direct-connect gameplay bugs or issues.
 
 Checks performed where no code change was needed:
 
@@ -2182,13 +2185,13 @@ Checks performed where no code change was needed:
 - Client receives replicated GameState/PlayerState mirrors without GameMode access.
 - Session mode distinguishes the listen-server authority and the remote online client.
 - Local-only player creation and playtest bot fill did not appear in the direct-connect logs; both mirrored PlayerStates reported `bot=false`.
-- The human-observed direct-connect smoke pass did not reveal a possession, camera, local-vs-online gating, input-lock, Party Hall, or Mug Run startup bug after the Party Hall hold fix.
+- The human-observed direct-connect smoke pass did not reveal a possession, camera, local-vs-online gating, input-lock, Party Hall, Mug Run, Staffs at Dawn, or Grand Wizard Final bug after the Party Hall hold fix.
 
 Warnings/blockers found:
 
 - The project still has no authored project `.umap` asset under `Content` and no project `GameDefaultMap`, so direct-connect still uses `/Engine/Maps/Templates/OpenWorld` as a fallback.
 - Startup logs include repeated engine warnings/errors about missing VisionOS editor icon files and `FBodyInstance::GetSimplePhysicalMaterial` during native CDO construction. These appeared in both host and client startup logs and were not fixed in this pass because they did not block direct connection and are outside the direct-connect scaffold symptom fixed here.
-- Broader separate-process gameplay validation should still cover Staffs at Dawn, Grand Wizard Final, event feed display, and rematch/reset before moving toward Steam/lobby work.
+- Before moving toward Steam/lobby work, the lowest-risk cleanup is to replace the engine OpenWorld fallback with a real project startup map/default-map configuration and do one more packaged/direct-connect readiness pass.
 
 What remains authoritative:
 
@@ -2230,7 +2233,7 @@ Recommended next Codex prompt for the next online code spike:
 ```text
 Project rules:
 - This is Wizard's Staff, currently a locked local multiplayer prototype.
-- Continue the online multiplayer spike with an extended human-observed separate-process direct-connect full-loop smoke-test and bugfix pass only.
+- Continue the online multiplayer spike with a pre-Steam direct-connect readiness/configuration pass only.
 - Do not add Steam lobbies, matchmaking, public lobby browser, friend invites, a third Trial, new spells, new powerups, Hammer Time, final UI, cosmetics, progression, or gameplay retuning.
 - Preserve local one-human-versus-bot and local couch multiplayer workflows.
 - Keep the current online scaffolding for GameState/PlayerState, explicit prototype session mode, movement, staff count, Slosh/Stress, pickups, rewards, Use Reward, server-owned Arcane Pinball gameplay projectile, Quick Bonk, ring-out/respawn, Staff Clash, Mega Staff, Grand Wizard Final readable/steal state, rematch/reset cleanup, actor lifecycle cleanup, replicated event feed, and direct-connect preparation working.
@@ -2238,24 +2241,23 @@ Project rules:
 - Keep changes small and build after changes.
 
 Goal:
-Run an extended human-observed separate-process non-Steam direct-connect full-loop smoke test across Party Hall -> Mug Run -> Staffs at Dawn -> Grand Wizard Final -> Results/rematch, then fix only concrete bugs observed in the host/client windows.
+Replace the current engine OpenWorld fallback with the smallest safe project-owned startup map/default-map configuration for direct-connect testing, then run a quick separate-process direct-connect sanity check to confirm the already-passing full loop still launches cleanly.
 
 Requirements:
-1. Start the host with the current prototype/default map using `?listen`.
-2. Start a second game process and connect with `open 127.0.0.1` or `open 127.0.0.1:7777`.
-3. Confirm host and client each receive exactly one possessed wizard, stable display slot/color, top-down shared camera, runtime Party Hall/arena visibility, and no extra local-only bot/player setup.
-4. Reconfirm the early path already observed clean: top-down camera, no extra bots/players, client owns only its wizard, input locks feel correct, and Mug Run starts only after both players are present.
-5. Continue into Staffs at Dawn and exercise Quick Bonk, Staff Clash if practical, ring-out/respawn if practical, Staffs powerup pickup, and Mega Staff if practical.
-6. Continue into Grand Wizard Final and verify Candidate, SAFE/VULNERABLE state, ritual circle visibility, steal progress readability, timer, winner, event feed, and rematch/reset.
-7. Fix only concrete bugs observed in direct-connect authority, stale state, actor lifecycle, HUD readability, event-feed duplication, reset generation, possession, presentation replication, input lock, or cleanup.
-8. Preserve standalone local behavior and all current gameplay tuning.
-9. Do not add Steam sessions, lobby UI, matchmaking, production UI, prediction, rewind, lag compensation, new Trials, new spells, new rewards, or new powerups.
-10. Build after code changes.
+1. Create or configure the smallest project-owned prototype map/default map needed for direct-connect launch instead of relying on `/Engine/Maps/Templates/OpenWorld`.
+2. Keep runtime Party Hall, Mug Run, Staffs at Dawn, Grand Wizard Final, and rematch behavior unchanged.
+3. Preserve standalone local PIE, one-human-versus-bot, local couch multiplayer, shared camera, keyboard fallback, and playtest bot fill.
+4. Preserve the human-observed clean direct-connect behavior: top-down cameras, no extra bots/players, client controls only its wizard, input locks feel correct, and the full Party Hall -> Mug Run -> Staffs at Dawn -> Grand Wizard Final loop passes.
+5. Keep direct-connect host/client commands simple and non-Steam.
+6. Do not add Steam sessions, lobby UI, matchmaking, prediction, rewind, lag compensation, new Trials, new spells, new rewards, or new powerups.
+7. Build after changes.
+8. Run or document a quick direct-connect sanity check after the map/default-map change.
 
 After implementation:
-- Explain what was tested in separate-process direct-connect and what was directly observed in the windows.
-- Be explicit about whether direct-connect host/client was actually run.
-- Explain every concrete direct-connect scaffold bug fixed.
+- Explain the map/default-map configuration change.
+- Explain what was tested in separate-process direct-connect after the change.
+- Be explicit about whether direct-connect host/client was actually rerun.
+- Explain every concrete direct-connect or map-launch bug fixed.
 - Explain what was audited and left unchanged.
 - Explain how local mode was preserved.
 - Explain how to rerun both PIE listen-server and direct-connect smoke tests.
