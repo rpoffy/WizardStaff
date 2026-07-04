@@ -1,0 +1,13 @@
+{
+	"FileVersion": 3,
+	"EngineAssociation": "5.7",
+	"Category": "Games",
+	"Description": "Wizard's Staff local multiplayer party-game prototype.",
+	"Modules": [
+		{
+			"Name": "WizardStaff",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	]
+}

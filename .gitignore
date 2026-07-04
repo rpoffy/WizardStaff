@@ -1,0 +1,18 @@
+# Unreal generated files
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+
+# IDE and build metadata
+.vs/
+.agents/
+.codex/
+*.sln
+*.VC.db
+*.opensdf
+*.sdf
+
+# Local UnrealBuildTool logs from manual verification builds
+WizardStaff_UBT*.log
+WizardStaff_UBT.json
