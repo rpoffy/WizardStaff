@@ -1,10 +1,13 @@
 #include "WizardStaffGameMode.h"
 
+#include "Components/BoxComponent.h"
+#include "Components/CapsuleComponent.h"
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/GameInstance.h"
 #include "Engine/CollisionProfile.h"
+#include "Engine/DirectionalLight.h"
 #include "Engine/Engine.h"
 #include "Engine/OverlapResult.h"
 #include "Engine/StaticMesh.h"
@@ -19,9 +22,16 @@
 #include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
+#include "Misc/CommandLine.h"
 #include "Misc/ScopeExit.h"
 #include "UObject/UObjectGlobals.h"
 #include "WizardStaffArcanePinballProjectile.h"
+#include "WizardStaffCauldronArena.h"
+#include "WizardStaffCauldronDepositArc.h"
+#include "WizardStaffCauldronCurseBomb.h"
+#include "WizardStaffCauldronHazard.h"
+#include "WizardStaffCauldronIngredient.h"
+#include "WizardStaffCauldronVialPickup.h"
 #include "WizardStaffComponent.h"
 #include "WizardStaffFinalRitualCircle.h"
 #include "WizardStaffGameState.h"
@@ -30,6 +40,7 @@
 #include "WizardStaffHUD.h"
 #include "WizardStaffPlayerState.h"
 #include "WizardStaffPrototypeArena.h"
+#include "WizardStaffPrototypeLighting.h"
 #include "WizardStaffPlaytestBotComponent.h"
 #include "WizardStaffSharedCamera.h"
 #include "WizardStaffStaffsAtDawnArena.h"
@@ -53,6 +64,42 @@ FString PrototypeSessionModeToText(EWizardPrototypeSessionMode SessionMode)
 	default:
 		return TEXT("Unknown");
 	}
+}
+
+bool HasCommandLineToken(const TCHAR* Token)
+{
+#if !UE_BUILD_SHIPPING
+	const FString CommandLine = FCommandLine::Get();
+	return Token && CommandLine.Contains(Token, ESearchCase::IgnoreCase, ESearchDir::FromStart);
+#else
+	return false;
+#endif
+}
+
+bool IsSteamSmokeHostCommandLineRequested()
+{
+	return HasCommandLineToken(TEXT("WizardSteamHost")) || HasCommandLineToken(TEXT("DebugSteamHostSession"));
+}
+
+bool IsSteamSmokeJoinCommandLineRequested()
+{
+	return HasCommandLineToken(TEXT("WizardSteamJoinFirstSession")) || HasCommandLineToken(TEXT("DebugSteamFindAndJoinSession"));
+}
+
+bool IsDirectConnectJoinCommandLineRequested()
+{
+#if !UE_BUILD_SHIPPING
+	const FString CommandLine = FCommandLine::Get();
+	if (!CommandLine.Contains(TEXT("ExecCmds"), ESearchCase::IgnoreCase, ESearchDir::FromStart))
+	{
+		return false;
+	}
+
+	return CommandLine.Contains(TEXT("open 127.0.0.1"), ESearchCase::IgnoreCase, ESearchDir::FromStart)
+		|| CommandLine.Contains(TEXT("open localhost"), ESearchCase::IgnoreCase, ESearchDir::FromStart);
+#else
+	return false;
+#endif
 }
 
 FWizardPrototypeTuningPresetValues MakeStableWizardPreset()
@@ -253,15 +300,19 @@ FColor GetReplicatedGameplayEventColor(EWizardReplicatedGameplayEventType EventT
 	case EWizardReplicatedGameplayEventType::MegaStaffGranted:
 	case EWizardReplicatedGameplayEventType::MegaStaffExpired:
 		return FColor::Magenta;
+	case EWizardReplicatedGameplayEventType::StaffSegmentSnapped:
 	case EWizardReplicatedGameplayEventType::RingOutPending:
 		return FColor::Red;
 	case EWizardReplicatedGameplayEventType::RespawnComplete:
 	case EWizardReplicatedGameplayEventType::StaffClashStarted:
 		return FColor::Cyan;
 	case EWizardReplicatedGameplayEventType::StaffClashResolved:
+	case EWizardReplicatedGameplayEventType::CauldronIngredientDeposited:
 	case EWizardReplicatedGameplayEventType::GrandWizardCandidateChanged:
 	case EWizardReplicatedGameplayEventType::FinalWinner:
 		return FColor::Yellow;
+	case EWizardReplicatedGameplayEventType::CauldronCurse:
+		return FColor::Red;
 	case EWizardReplicatedGameplayEventType::RematchStarted:
 	case EWizardReplicatedGameplayEventType::MugPickup:
 	default:
@@ -282,11 +333,14 @@ EWizardHudMessageCategory GetReplicatedGameplayEventHudCategory(EWizardReplicate
 	case EWizardReplicatedGameplayEventType::MegaStaffGranted:
 	case EWizardReplicatedGameplayEventType::MegaStaffExpired:
 		return EWizardHudMessageCategory::Powerup;
+	case EWizardReplicatedGameplayEventType::StaffSegmentSnapped:
 	case EWizardReplicatedGameplayEventType::RingOutPending:
 	case EWizardReplicatedGameplayEventType::RespawnComplete:
 	case EWizardReplicatedGameplayEventType::StaffClashStarted:
 	case EWizardReplicatedGameplayEventType::StaffClashResolved:
+	case EWizardReplicatedGameplayEventType::CauldronCurse:
 		return EWizardHudMessageCategory::Gameplay;
+	case EWizardReplicatedGameplayEventType::CauldronIngredientDeposited:
 	case EWizardReplicatedGameplayEventType::GrandWizardCandidateChanged:
 	case EWizardReplicatedGameplayEventType::FinalWinner:
 		return EWizardHudMessageCategory::Scoring;
@@ -323,6 +377,7 @@ void AWizardStaffGameMode::BeginPlay()
 
 	ApplyPlaytestBotPIEDefaults();
 	RefreshPrototypeSessionMode(TEXT("BeginPlay"));
+	SpawnPrototypeLighting();
 	SpawnPrototypeArena();
 	SpawnStaffsAtDawnArena();
 	SpawnPartyHall();
@@ -341,6 +396,51 @@ void AWizardStaffGameMode::BeginPlay()
 		StartPartyMatch();
 	}
 	SyncReplicatedObservableState();
+}
+
+void AWizardStaffGameMode::SpawnPrototypeLighting()
+{
+	UWorld* World = GetWorld();
+	if (!World || ActivePrototypeLighting)
+	{
+		return;
+	}
+
+	for (TActorIterator<AWizardStaffPrototypeLighting> It(World); It; ++It)
+	{
+		if (IsValid(*It))
+		{
+			ActivePrototypeLighting = *It;
+			return;
+		}
+	}
+
+	for (TActorIterator<ADirectionalLight> It(World); It; ++It)
+	{
+		if (IsValid(*It))
+		{
+			UE_LOG(LogTemp, Log, TEXT("WizardStaff using authored map lighting from %s."), *GetNameSafe(*It));
+			return;
+		}
+	}
+
+	FActorSpawnParameters SpawnParameters;
+	SpawnParameters.Name = MakeUniqueObjectName(World, AWizardStaffPrototypeLighting::StaticClass(), TEXT("RuntimePrototypeLighting"));
+	SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	ActivePrototypeLighting = World->SpawnActor<AWizardStaffPrototypeLighting>(
+		AWizardStaffPrototypeLighting::StaticClass(),
+		FVector::ZeroVector,
+		FRotator::ZeroRotator,
+		SpawnParameters);
+
+	if (ActivePrototypeLighting)
+	{
+		UE_LOG(LogTemp, Log, TEXT("WizardStaff spawned runtime prototype sun/sky lighting because the startup map has no authored directional light."));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("WizardStaff could not spawn runtime prototype lighting; the world may render dark."));
+	}
 }
 
 void AWizardStaffGameMode::ApplyPlaytestBotPIEDefaults()
@@ -379,6 +479,19 @@ EWizardPrototypeSessionMode AWizardStaffGameMode::DetectPrototypeSessionMode() c
 		default:
 			break;
 		}
+	}
+
+	if (IsSteamSmokeHostCommandLineRequested())
+	{
+		return EWizardPrototypeSessionMode::OnlineListenServer;
+	}
+	if (IsSteamSmokeJoinCommandLineRequested())
+	{
+		return EWizardPrototypeSessionMode::OnlineClient;
+	}
+	if (IsDirectConnectJoinCommandLineRequested())
+	{
+		return EWizardPrototypeSessionMode::OnlineClient;
 	}
 
 	const int32 HumanPlayers = FMath::Clamp(DesiredHumanPlayers, 1, 4);
@@ -420,7 +533,8 @@ bool AWizardStaffGameMode::IsStandaloneLocalPrototypeSession() const
 
 bool AWizardStaffGameMode::ShouldHoldOnlineIntermissionForPlayers() const
 {
-	return DetectPrototypeSessionMode() == EWizardPrototypeSessionMode::OnlineListenServer
+	const EWizardPrototypeSessionMode DetectedMode = DetectPrototypeSessionMode();
+	return (DetectedMode == EWizardPrototypeSessionMode::OnlineListenServer || DetectedMode == EWizardPrototypeSessionMode::OnlineClient)
 		&& GetConnectedPlayerControllerCount() < 2;
 }
 
@@ -462,11 +576,17 @@ void AWizardStaffGameMode::AssignOnlineScaffoldPlayerSlot(AController* Controlle
 		return;
 	}
 
-	const int32 PlayerIndex = GetControllerIndex(Controller);
+	const int32 ExistingPlayerSlot = WizardPlayerState->GetWizardDisplaySlot();
+	const bool bAssigningNewSlot = ExistingPlayerSlot < 0;
+	const int32 PlayerIndex = bAssigningNewSlot
+		? FindFirstAvailablePlayerSlot(WizardPlayerState)
+		: ExistingPlayerSlot;
 	const AWizardStaffWizardCharacter* Wizard = Cast<AWizardStaffWizardCharacter>(Controller->GetPawn());
 	const int32 StaffSegmentScore = Wizard ? Wizard->GetStaffSegmentCount() : 0;
 	const int32 StaffsAtDawnScore = GetStaffsAtDawnScore(PlayerIndex);
-	const int32 CurrentTrialScore = ActiveTrialType == EWizardTrialType::StaffsAtDawn ? StaffsAtDawnScore : StaffSegmentScore;
+	const int32 CurrentTrialScore = ActiveTrialType == EWizardTrialType::StaffsAtDawn
+		? StaffsAtDawnScore
+		: (ActiveTrialType == EWizardTrialType::CauldronCatastrophe ? GetCauldronScore(PlayerIndex) : StaffSegmentScore);
 	const bool bBot = IsPlayerIndexPlaytestBot(PlayerIndex);
 	const FString SummaryText = FString::Printf(
 		TEXT("P%d Staff %d Favor %d Wins %d%s"),
@@ -476,7 +596,7 @@ void AWizardStaffGameMode::AssignOnlineScaffoldPlayerSlot(AController* Controlle
 		GetPlayerRoundWins(PlayerIndex),
 		bBot ? TEXT(" BOT") : TEXT(""));
 
-	WizardPlayerState->SetWizardPlayerMirror(
+	const bool bMirrorChanged = WizardPlayerState->SetWizardPlayerMirror(
 		PlayerIndex,
 		PlayerIndex,
 		GetPlayerRoundWins(PlayerIndex),
@@ -486,14 +606,46 @@ void AWizardStaffGameMode::AssignOnlineScaffoldPlayerSlot(AController* Controlle
 		IsPartyHallPlayerReady(PlayerIndex),
 		bBot,
 		SummaryText);
-	WizardPlayerState->ForceNetUpdate();
+	if (bMirrorChanged)
+	{
+		WizardPlayerState->ForceNetUpdate();
+	}
 
-	if (!IsStandaloneLocalPrototypeSession())
+	if (bAssigningNewSlot && !IsStandaloneLocalPrototypeSession())
 	{
 		UE_LOG(LogTemp, Log, TEXT("WizardStaff online scaffold assigned %s to display slot P%d."),
 			*GetNameSafe(Controller),
 			PlayerIndex + 1);
 	}
+}
+
+int32 AWizardStaffGameMode::FindFirstAvailablePlayerSlot(const AWizardStaffPlayerState* PlayerStateToIgnore) const
+{
+	TSet<int32> UsedSlots;
+	if (const AWizardStaffGameState* WizardGameState = GetWizardStaffGameState())
+	{
+		for (const APlayerState* BasePlayerState : WizardGameState->PlayerArray)
+		{
+			const AWizardStaffPlayerState* WizardPlayerState = Cast<AWizardStaffPlayerState>(BasePlayerState);
+			if (!WizardPlayerState || WizardPlayerState == PlayerStateToIgnore)
+			{
+				continue;
+			}
+
+			const int32 AssignedSlot = WizardPlayerState->GetWizardDisplaySlot();
+			if (AssignedSlot >= 0)
+			{
+				UsedSlots.Add(AssignedSlot);
+			}
+		}
+	}
+
+	int32 CandidateSlot = 0;
+	while (UsedSlots.Contains(CandidateSlot))
+	{
+		++CandidateSlot;
+	}
+	return CandidateSlot;
 }
 
 void AWizardStaffGameMode::Tick(float DeltaSeconds)
@@ -520,7 +672,7 @@ void AWizardStaffGameMode::Tick(float DeltaSeconds)
 #if !UE_BUILD_SHIPPING
 			if (!bLoggedWaitingForOnlinePlayers)
 			{
-				UE_LOG(LogTemp, Log, TEXT("WizardStaff listen server holding Party Hall until a second player connects."));
+				UE_LOG(LogTemp, Log, TEXT("WizardStaff online smoke startup holding Party Hall until a second player connects."));
 				bLoggedWaitingForOnlinePlayers = true;
 			}
 #endif
@@ -605,6 +757,14 @@ void AWizardStaffGameMode::Tick(float DeltaSeconds)
 		return;
 	}
 
+	if (ActiveTrialType == EWizardTrialType::CauldronCatastrophe && ActiveTrialState == EWizardTrialState::Active)
+	{
+		UpdateCauldronCatastrophe(DeltaSeconds);
+		DrawMugRunDebug();
+		UpdateLeaderHighlights();
+		return;
+	}
+
 	if (MugRunMatchState != EWizardMugRunMatchState::Playing)
 	{
 		DrawMugRunDebug();
@@ -666,6 +826,9 @@ void AWizardStaffGameMode::StartPartyMatch()
 		return;
 	}
 
+	CleanupCauldronCatastrophe();
+	CauldronScores.Reset();
+	LastCauldronCursedPlayerIndex = INDEX_NONE;
 	BumpMatchSessionGeneration();
 	CompletedTrialCount = 0;
 	EnsurePlayerRoundWinsSize(GetDesiredLocalPlayerCountForSession());
@@ -693,8 +856,13 @@ void AWizardStaffGameMode::StartPartyMatch()
 	MugRunWinnerMessage.Reset();
 	ResetGrandWizardFinalRoundState();
 	ResetStaffsAtDawnForNewTrial();
-
-	ResetMugRunForNewMatch();
+	ClearPendingOutOfArenaRespawns();
+	if (LooseSegmentChaosTuning.bCleanupLooseSegmentsOnRematch)
+	{
+		CleanupLooseSnappedSegments();
+	}
+	ResetWizardGameplayStateForMatchSetup();
+	ResetMugRunStateForNewTrial();
 	SetMugRunPickupsActive(false);
 	MugRunWinnerMessage.Reset();
 	PublishReplicatedGameplayEvent(
@@ -727,6 +895,8 @@ void AWizardStaffGameMode::StartNextTrial()
 
 void AWizardStaffGameMode::StartTrialCountdown(EWizardTrialType TrialType)
 {
+	CleanupCauldronCatastrophe();
+	CauldronScores.Reset();
 	ActiveTrialType = TrialType;
 	PartyMatchState = EWizardPartyMatchState::Trial;
 	ActiveTrialState = EWizardTrialState::Countdown;
@@ -737,10 +907,17 @@ void AWizardStaffGameMode::StartTrialCountdown(EWizardTrialType TrialType)
 	PartyHallReadyFeedbackExpireTime = 0.0f;
 	bPartyHallAllReadyTriggered = false;
 	ClearReplicatedGameplayEventFeed();
+	ClearPendingOutOfArenaRespawns();
 
 	if (ActiveTrialType == EWizardTrialType::MugRun)
 	{
-		ResetMugRunForNewMatch();
+		SetPrototypeArenaPhasePresentationActive(true);
+		if (LooseSegmentChaosTuning.bCleanupLooseSegmentsOnRematch)
+		{
+			CleanupLooseSnappedSegments();
+		}
+		ResetWizardGameplayStateForMatchSetup();
+		ResetMugRunStateForNewTrial();
 		SetMugRunPickupsActive(false);
 	}
 	else if (ActiveTrialType == EWizardTrialType::StaffsAtDawn)
@@ -748,13 +925,26 @@ void AWizardStaffGameMode::StartTrialCountdown(EWizardTrialType TrialType)
 		ResetStaffsAtDawnForNewTrial();
 		SetMugRunPickupsActive(false);
 	}
+	else if (ActiveTrialType == EWizardTrialType::CauldronCatastrophe)
+	{
+		SetMugRunPickupsActive(false);
+		ResetStaffsAtDawnPowerups();
+	}
 
 	if (PartyMatchTuning.bResetStaffsAtTrialStart)
 	{
 		ResetWizardStaffsForTrialStart();
 	}
-	RespawnWizardsForTrialStart();
-	bWizardsStagedForActiveTrial = true;
+	if (TrialType == EWizardTrialType::CauldronCatastrophe)
+	{
+		// The Cauldron floor is spawned at activation, so keep players in Party Hall until then.
+		bWizardsStagedForActiveTrial = false;
+	}
+	else
+	{
+		StageWizardsForCurrentPhase();
+		bWizardsStagedForActiveTrial = true;
+	}
 	SetWizardPrototypeInputsLocked(true);
 
 	AWizardStaffHUD::PushGameplayMessage(this, FString::Printf(TEXT("Trial Countdown: %s"), *GetActiveTrialName()), FColor::Cyan, 1.8f, EWizardHudMessageCategory::Gameplay);
@@ -780,8 +970,13 @@ void AWizardStaffGameMode::StartActiveTrial()
 		StartMugRunMatch();
 		break;
 	case EWizardTrialType::StaffsAtDawn:
-	default:
 		StartStaffsAtDawnTrial();
+		break;
+	case EWizardTrialType::CauldronCatastrophe:
+		StartCauldronCatastropheTrial();
+		break;
+	default:
+		StartMugRunMatch();
 		break;
 	}
 }
@@ -799,9 +994,11 @@ void AWizardStaffGameMode::StartMugRunMatch()
 	PartyMatchState = EWizardPartyMatchState::Trial;
 	ActiveTrialType = EWizardTrialType::MugRun;
 	ActiveTrialState = EWizardTrialState::Active;
+	// Countdown staging already revealed the Mug Run arena; keep it active for gameplay.
+	SetPrototypeArenaPhasePresentationActive(true);
 	if (!bWizardsStagedForActiveTrial)
 	{
-		RespawnWizardsForTrialStart();
+		StageWizardsForCurrentPhase();
 	}
 	bWizardsStagedForActiveTrial = false;
 	SetWizardPrototypeInputsLocked(false);
@@ -857,7 +1054,7 @@ void AWizardStaffGameMode::StartStaffsAtDawnTrial()
 	ActiveTrialState = EWizardTrialState::Active;
 	if (!bWizardsStagedForActiveTrial)
 	{
-		RespawnWizardsForStaffsAtDawn();
+		StageWizardsForCurrentPhase();
 	}
 	bWizardsStagedForActiveTrial = false;
 	SetWizardPrototypeInputsLocked(false);
@@ -949,6 +1146,2366 @@ void AWizardStaffGameMode::EndStaffsAtDawnTrial()
 	UpdateLeaderHighlights();
 }
 
+void AWizardStaffGameMode::StartCauldronCatastropheTrial()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	CleanupCauldronCatastrophe();
+	PartyMatchState = EWizardPartyMatchState::Trial;
+	ActiveTrialType = EWizardTrialType::CauldronCatastrophe;
+	ActiveTrialState = EWizardTrialState::Active;
+	bWizardsStagedForActiveTrial = false;
+	SetMugRunPickupsActive(false);
+	CleanupArcanePinballProjectiles();
+	ResetStaffsAtDawnPowerups();
+	ClearPendingOutOfArenaRespawns();
+	SetPrototypeArenaPhasePresentationActive(false);
+	for (AWizardStaffWizardCharacter* Wizard : GetCurrentWizards())
+	{
+		if (Wizard && Wizard->IsMegaStaffBrewActive())
+		{
+			Wizard->ClearMegaStaffBrew(true);
+		}
+	}
+
+	EnsureCauldronScoreSize(GetDesiredLocalPlayerCountForSession());
+	for (int32& Score : CauldronScores)
+	{
+		Score = 0;
+	}
+	MugRunWinnerMessage.Reset();
+	CauldronRemainingTime = FMath::Max(CauldronCatastropheTuning.TrialDuration, 0.0f);
+
+	CauldronNextCurseTime = FMath::Max(CauldronCatastropheTuning.FirstCurseDelay, 0.0f);
+	bCauldronCatastropheActive = true;
+	ResetCauldronSpillState();
+
+	if (UWorld* World = GetWorld())
+	{
+		FActorSpawnParameters SpawnParameters;
+		SpawnParameters.Name = MakeUniqueObjectName(World, AWizardStaffCauldronArena::StaticClass(), TEXT("CauldronCatastropheArena"));
+		ActiveCauldronArena = World->SpawnActor<AWizardStaffCauldronArena>(AWizardStaffCauldronArena::StaticClass(), RuntimeCauldronArenaLocation, FRotator::ZeroRotator, SpawnParameters);
+	}
+
+	// Keep countdown staging in Party Hall, then move wizards only after the Cauldron floor exists.
+	StageWizardsForCurrentPhase();
+	SetWizardPrototypeInputsLocked(false);
+	SetCauldronActiveIntake(ChooseNextCauldronIntake(EWizardCauldronIntakeDirection::None));
+
+	for (int32 VialIndex = 0; VialIndex < FMath::Max(CauldronCatastropheTuning.InitialVialCount, 1); ++VialIndex)
+	{
+		SpawnCauldronVial();
+	}
+
+	AWizardStaffHUD::PushGameplayMessage(this, TEXT("Cauldron Catastrophe! Collect vials to grow your staff."), FColor::Yellow, 3.0f, EWizardHudMessageCategory::Gameplay);
+	UE_LOG(LogTemp, Log, TEXT("Cauldron Catastrophe started for %.0f seconds with %d vials."), CauldronRemainingTime, SpawnedCauldronVials.Num());
+	SyncReplicatedObservableState();
+}
+
+void AWizardStaffGameMode::EndCauldronCatastropheTrial()
+{
+	if (!HasAuthority() || !bCauldronCatastropheActive)
+	{
+		return;
+	}
+
+	bCauldronCatastropheActive = false;
+	CauldronRemainingTime = 0.0f;
+	TrialResultsRemainingTime = FMath::Max(PartyMatchTuning.TrialResultsDisplayDuration, 0.0f);
+	MugRunPostMatchRemainingTime = TrialResultsRemainingTime;
+	PartyMatchState = EWizardPartyMatchState::Results;
+	ActiveTrialState = EWizardTrialState::Results;
+	CleanupCauldronGameplayState();
+	AnnounceCauldronWinner();
+	// Retain only the Cauldron arena through Results/intermission so its floor remains under
+	// transitioning players. Gameplay actors, effects, and callbacks are already neutralized.
+	SyncReplicatedObservableState();
+}
+
+void AWizardStaffGameMode::DebugStartCauldronCatastrophe()
+{
+#if !UE_BUILD_SHIPPING
+	if (!HasAuthority())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("DebugStartCauldronCatastrophe rejected on a non-authority instance."));
+		return;
+	}
+
+	bMugRunMatchActive = false;
+	bStaffsAtDawnTrialActive = false;
+	StartTrialCountdown(EWizardTrialType::CauldronCatastrophe);
+	TrialCountdownRemainingTime = 0.0f;
+	StartActiveTrial();
+#endif
+}
+
+void AWizardStaffGameMode::DebugSpawnCauldronIngredient()
+{
+#if !UE_BUILD_SHIPPING
+	UE_LOG(LogTemp, Warning, TEXT("DebugSpawnCauldronIngredient is legacy; use DebugSpawnCauldronVial Speed or BurdeningPower."));
+#endif
+}
+
+void AWizardStaffGameMode::DebugSpawnCauldronVial(const FString& VialType)
+{
+#if !UE_BUILD_SHIPPING
+	if (HasAuthority() && bCauldronCatastropheActive)
+	{
+		const EWizardCauldronVialType ParsedType = ParseCauldronVialType(VialType);
+		if (ParsedType != EWizardCauldronVialType::None)
+		{
+			SpawnCauldronVial(ParsedType);
+		}
+	}
+#endif
+}
+
+void AWizardStaffGameMode::DebugGiveCauldronVial(int32 PlayerIndex, const FString& VialType)
+{
+#if !UE_BUILD_SHIPPING
+	if (HasAuthority() && bCauldronCatastropheActive)
+	{
+		if (AWizardStaffWizardCharacter* Wizard = GetWizardForPlayerIndex(PlayerIndex))
+		{
+			GrantCauldronVial(Wizard, ParseCauldronVialType(VialType));
+		}
+	}
+#endif
+}
+
+void AWizardStaffGameMode::DebugBreakTopCauldronVialSegment(int32 PlayerIndex)
+{
+#if !UE_BUILD_SHIPPING
+	if (HasAuthority() && bCauldronCatastropheActive)
+	{
+		if (AWizardStaffWizardCharacter* Wizard = GetWizardForPlayerIndex(PlayerIndex))
+		{
+			if (Wizard->StaffComponent)
+			{
+				Wizard->StaffComponent->SnapTopStaffSegment();
+			}
+		}
+	}
+#endif
+}
+
+void AWizardStaffGameMode::DebugPrintCauldronVialStack(int32 PlayerIndex)
+{
+#if !UE_BUILD_SHIPPING
+	const AWizardStaffWizardCharacter* Wizard = GetWizardForPlayerIndex(PlayerIndex);
+	const TArray<FCauldronVialStackEntry>* Stack = Wizard ? CauldronVialStacks.Find(Wizard) : nullptr;
+	FString StackText;
+	if (Stack)
+	{
+		for (const FCauldronVialStackEntry& Entry : *Stack)
+		{
+			StackText += (StackText.IsEmpty() ? TEXT("") : TEXT(" -> ")) + GetWizardCauldronVialDisplayName(Entry.Type);
+		}
+	}
+	UE_LOG(LogTemp, Log, TEXT("Cauldron vial stack P%d: %s"), PlayerIndex + 1, StackText.IsEmpty() ? TEXT("(empty)") : *StackText);
+#endif
+}
+
+void AWizardStaffGameMode::DebugPrintCauldronInstability(int32 PlayerIndex)
+{
+#if !UE_BUILD_SHIPPING
+	const AWizardStaffWizardCharacter* Wizard = GetWizardForPlayerIndex(PlayerIndex);
+	const TArray<FCauldronVialStackEntry>* Stack = Wizard ? CauldronVialStacks.Find(Wizard) : nullptr;
+	const int32 AuthoritativeCount = Stack ? Stack->Num() : 0;
+	const int32 SafeCount = FMath::Max(CauldronCatastropheTuning.VialInstabilitySafeCount, 0);
+	const int32 ExtraCount = FMath::Max(AuthoritativeCount - SafeCount, 0);
+	FString ValidationReport;
+	const bool bVialStateValid = ValidateCauldronVialState(Wizard, ValidationReport);
+	UE_LOG(LogTemp, Log, TEXT("Cauldron instability P%d: authoritative %d | readable %d | safe %d | extra %d | per-extra %.2f | multiplier %.2fx | max %.2fx | active %s | enabled %s | stress %.1f | vial %s | stack/tag %s (%s)"),
+		PlayerIndex + 1, AuthoritativeCount, Wizard ? Wizard->GetReadableCauldronVialCount() : 0, SafeCount, ExtraCount,
+		CauldronCatastropheTuning.VialInstabilityStressPerExtraVial, GetCauldronVialInstabilityMultiplier(Wizard),
+		CauldronCatastropheTuning.VialInstabilityMaximumMultiplier, bCauldronCatastropheActive ? TEXT("Cauldron") : TEXT("Inactive"),
+		CauldronCatastropheTuning.bEnableVialInstability ? TEXT("true") : TEXT("false"), Wizard ? Wizard->GetReadableStaffStress() : 0.0f,
+		Wizard ? *GetWizardCauldronVialDisplayName(Wizard->GetReadableActiveCauldronVial()) : TEXT("None"),
+		bVialStateValid ? TEXT("valid") : TEXT("MISMATCH"), *ValidationReport);
+#endif
+}
+
+void AWizardStaffGameMode::DebugApplyCauldronInstabilityTestHit(int32 AttackerIndex, int32 TargetIndex)
+{
+#if !UE_BUILD_SHIPPING
+	if (!HasAuthority() || !bCauldronCatastropheActive)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Cauldron instability test hit requires the active authoritative Cauldron trial."));
+		return;
+	}
+
+	AWizardStaffWizardCharacter* Attacker = GetWizardForPlayerIndex(AttackerIndex);
+	AWizardStaffWizardCharacter* Target = GetWizardForPlayerIndex(TargetIndex);
+	if (!IsValid(Attacker) || !IsValid(Target) || Attacker == Target)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Cauldron instability test hit requires two different valid wizards."));
+		return;
+	}
+
+	const float Multiplier = GetCauldronVialInstabilityMultiplier(Target);
+	float BaseStress = 0.0f;
+	float FinalStress = 0.0f;
+	if (Multiplier <= 1.0f || !Target->ApplyCauldronVialInstabilityStress(Multiplier, BaseStress, FinalStress))
+	{
+		UE_LOG(LogTemp, Log, TEXT("Cauldron instability test P%d -> P%d did not apply: multiplier %.2fx."), AttackerIndex + 1, TargetIndex + 1, Multiplier);
+		return;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("Cauldron instability test P%d -> P%d: base %.2f x %.2f = final %.2f."), AttackerIndex + 1, TargetIndex + 1, BaseStress, Multiplier, FinalStress);
+#endif
+}
+
+void AWizardStaffGameMode::DebugValidateCauldronVialState(int32 PlayerIndex)
+{
+#if !UE_BUILD_SHIPPING
+	FString Report;
+	const AWizardStaffWizardCharacter* Wizard = GetWizardForPlayerIndex(PlayerIndex);
+	const bool bValid = ValidateCauldronVialState(Wizard, Report);
+	if (bValid)
+	{
+		UE_LOG(LogTemp, Log, TEXT("Cauldron vial validation P%d: %s"), PlayerIndex + 1, *Report);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Cauldron vial validation P%d: %s"), PlayerIndex + 1, *Report);
+	}
+#endif
+}
+
+void AWizardStaffGameMode::DebugClearCauldronVials()
+{
+#if !UE_BUILD_SHIPPING
+	if (HasAuthority())
+	{
+		ClearCauldronVials(true);
+	ResetCauldronSpillState();
+	}
+#endif
+}
+
+void AWizardStaffGameMode::DebugDepositCauldronVials(int32 PlayerIndex)
+{
+#if !UE_BUILD_SHIPPING
+	DebugStartCauldronBanking(PlayerIndex);
+#endif
+}
+
+void AWizardStaffGameMode::DebugSpillCauldronVials(int32 PlayerIndex)
+{
+#if !UE_BUILD_SHIPPING
+	if (HasAuthority() && bCauldronCatastropheActive)
+	{
+		SpillCauldronVials(GetWizardForPlayerIndex(PlayerIndex), true);
+	}
+#endif
+}
+
+void AWizardStaffGameMode::DebugPrintCauldronSpillState(int32 PlayerIndex)
+{
+#if !UE_BUILD_SHIPPING
+	const AWizardStaffWizardCharacter* Wizard = GetWizardForPlayerIndex(PlayerIndex);
+	const TWeakObjectPtr<AWizardStaffWizardCharacter> WizardKey(const_cast<AWizardStaffWizardCharacter*>(Wizard));
+	const TArray<FCauldronVialStackEntry>* Stack = CauldronVialStacks.Find(WizardKey);
+	FString SpillTypes;
+	if (Stack)
+	{
+		const int32 SpillCount = FMath::Min(Stack->Num(), FMath::Max(CauldronCatastropheTuning.RingOutVialsSpilled, 0));
+		for (int32 SpillIndex = 0; SpillIndex < SpillCount; ++SpillIndex)
+		{
+			SpillTypes += (SpillTypes.IsEmpty() ? TEXT("") : TEXT(", ")) + GetWizardCauldronVialDisplayName((*Stack)[Stack->Num() - 1 - SpillIndex].Type);
+		}
+	}
+	const FVector LastSafePosition = CauldronLastSafePositions.Contains(WizardKey) ? CauldronLastSafePositions[WizardKey] : FVector::ZeroVector;
+	UE_LOG(LogTemp, Log, TEXT("Cauldron spill P%d: stack %d | configured %d | last safe %s | allowed %s | processed %s | would spill [%s] | tracked pickups %d"),
+		PlayerIndex + 1,
+		Stack ? Stack->Num() : 0,
+		CauldronCatastropheTuning.RingOutVialsSpilled,
+		*LastSafePosition.ToCompactString(),
+		IsValid(Wizard) && bCauldronCatastropheActive ? TEXT("true") : TEXT("false"),
+		CauldronProcessedRingOutSpills.Contains(WizardKey) ? TEXT("true") : TEXT("false"),
+		*SpillTypes,
+		CauldronSpilledVialPickups.Num());
+#endif
+}
+
+void AWizardStaffGameMode::DebugSetCauldronLastSafePosition(int32 PlayerIndex)
+{
+#if !UE_BUILD_SHIPPING
+	if (!HasAuthority() || !bCauldronCatastropheActive)
+	{
+		return;
+	}
+
+	if (AWizardStaffWizardCharacter* Wizard = GetWizardForPlayerIndex(PlayerIndex))
+	{
+		if (IsCauldronSafeSpillPosition(Wizard->GetActorLocation()))
+		{
+			CauldronLastSafePositions.Add(Wizard, Wizard->GetActorLocation());
+			UE_LOG(LogTemp, Log, TEXT("Cauldron spill P%d recorded safe position %s."), PlayerIndex + 1, *Wizard->GetActorLocation().ToCompactString());
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Cauldron spill P%d rejected invalid safe position %s."), PlayerIndex + 1, *Wizard->GetActorLocation().ToCompactString());
+		}
+	}
+#endif
+}
+void AWizardStaffGameMode::DebugAssignCauldronCurse(int32 PlayerIndex)
+{
+#if !UE_BUILD_SHIPPING
+	if (HasAuthority() && bCauldronCatastropheActive)
+	{
+		AssignCauldronCurse(PlayerIndex);
+	}
+#endif
+}
+
+void AWizardStaffGameMode::DebugClearCauldronHazards()
+{
+#if !UE_BUILD_SHIPPING
+	if (!HasAuthority())
+	{
+		return;
+	}
+	for (AWizardStaffCauldronHazard* Hazard : SpawnedCauldronHazards)
+	{
+		if (IsValid(Hazard))
+		{
+			Hazard->Destroy();
+		}
+	}
+	SpawnedCauldronHazards.Reset();
+	CauldronHazardExpirationTimes.Reset();
+	UpdateCauldronHazardEffects();
+#endif
+}
+
+void AWizardStaffGameMode::DebugEndCauldronCatastrophe()
+{
+#if !UE_BUILD_SHIPPING
+	if (HasAuthority())
+	{
+		EndCauldronCatastropheTrial();
+	}
+#endif
+}
+
+void AWizardStaffGameMode::DebugAddCauldronScore(int32 PlayerIndex, int32 Amount)
+{
+#if !UE_BUILD_SHIPPING
+	if (HasAuthority() && bCauldronCatastropheActive)
+	{
+		AddCauldronScore(PlayerIndex, Amount, TEXT("Debug"));
+	}
+#endif
+}
+
+void AWizardStaffGameMode::DebugSetCauldronIntake(const FString& IntakeDirection)
+{
+#if !UE_BUILD_SHIPPING
+	if (HasAuthority() && bCauldronCatastropheActive)
+	{
+		const EWizardCauldronIntakeDirection ParsedIntake = ParseCauldronIntakeDirection(IntakeDirection);
+		if (ParsedIntake != EWizardCauldronIntakeDirection::None)
+		{
+			SetCauldronActiveIntake(ParsedIntake);
+		}
+	}
+#endif
+}
+
+void AWizardStaffGameMode::DebugRotateCauldronIntake()
+{
+#if !UE_BUILD_SHIPPING
+	if (HasAuthority() && bCauldronCatastropheActive)
+	{
+		BeginCauldronIntakeRelocation();
+	}
+#endif
+}
+
+void AWizardStaffGameMode::DebugPrintCauldronIntakeState()
+{
+#if !UE_BUILD_SHIPPING
+	auto GetIntakeText = [](EWizardCauldronIntakeDirection IntakeDirection)
+	{
+		switch (IntakeDirection)
+		{
+		case EWizardCauldronIntakeDirection::North: return TEXT("North");
+		case EWizardCauldronIntakeDirection::East: return TEXT("East");
+		case EWizardCauldronIntakeDirection::South: return TEXT("South");
+		case EWizardCauldronIntakeDirection::West: return TEXT("West");
+		default: return TEXT("None");
+		}
+	};
+	UE_LOG(LogTemp, Log, TEXT("Cauldron intake: active %s | preview %s | relocating %s | remaining %.2fs"),
+		GetIntakeText(ActiveCauldronIntake),
+		GetIntakeText(PreviewCauldronIntake),
+		bCauldronIntakeRelocating ? TEXT("true") : TEXT("false"),
+		CauldronIntakeRelocationRemainingTime);
+#endif
+}
+
+void AWizardStaffGameMode::DebugStartCauldronBanking(int32 PlayerIndex)
+{
+#if !UE_BUILD_SHIPPING
+	if (HasAuthority() && bCauldronCatastropheActive)
+	{
+		if (AWizardStaffWizardCharacter* Wizard = GetWizardForPlayerIndex(PlayerIndex))
+		{
+			StartCauldronBanking(Wizard, NextDebugCauldronDepositSequence--, true);
+		}
+	}
+#endif
+}
+
+void AWizardStaffGameMode::DebugInterruptCauldronBanking()
+{
+#if !UE_BUILD_SHIPPING
+	if (HasAuthority())
+	{
+		EndCauldronBanking(TEXT("Debug interrupt"));
+	}
+#endif
+}
+
+void AWizardStaffGameMode::DebugPrintCauldronBankingState()
+{
+#if !UE_BUILD_SHIPPING
+	const AWizardStaffWizardCharacter* Banker = CauldronBankingWizard.Get();
+	const int32 BankerIndex = GetPlayerIndexForWizard(Banker);
+	const float Distance = IsValid(Banker) && IsValid(ActiveCauldronArena) && CauldronBankingIntake != EWizardCauldronIntakeDirection::None
+		? FVector::Dist2D(Banker->GetActorLocation(), ActiveCauldronArena->GetIntakeWorldLocation(CauldronBankingIntake))
+		: 0.0f;
+	UE_LOG(LogTemp, Log, TEXT("Cauldron banking: %s | P%d | session %d | intake %d | transferred %d | next %.2fs | distance %.0f/%.0f | last '%s'"),
+		IsValid(Banker) ? TEXT("active") : TEXT("inactive"),
+		BankerIndex + 1,
+		CauldronBankingSessionGeneration,
+		static_cast<int32>(CauldronBankingIntake),
+		CauldronBankingTransferredCount,
+		CauldronBankingNextTransferRemainingTime,
+		Distance,
+		CauldronCatastropheTuning.BankingMaximumDistanceFromIntake,
+		*CauldronBankingLastEndReason);
+#endif
+}
+
+bool AWizardStaffGameMode::HandleCauldronIngredientBonked(AWizardStaffWizardCharacter* Attacker, AWizardStaffCauldronIngredient* Ingredient)
+{
+	if (!HasAuthority() || !bCauldronCatastropheActive || !IsValid(Attacker) || !IsValid(Ingredient) || Ingredient->IsScored())
+	{
+		return false;
+	}
+
+	const int32 PlayerIndex = GetPlayerIndexForWizard(Attacker);
+	if (PlayerIndex == INDEX_NONE)
+	{
+		return false;
+	}
+
+	FVector BonkDirection = Ingredient->GetActorLocation() - Attacker->GetActorLocation();
+	BonkDirection.Z = FMath::Max(BonkDirection.Z, 0.18f);
+	return Ingredient->ApplyAuthoritativeBonk(PlayerIndex, BonkDirection, CauldronCatastropheTuning.IngredientBonkImpulse);
+}
+
+void AWizardStaffGameMode::GatherCauldronIngredientsInBonkBox(const FVector& BoxCenter, const FQuat& BoxRotation, const FVector& BoxExtent, TArray<AWizardStaffCauldronIngredient*>& OutIngredients) const
+{
+	OutIngredients.Reset();
+	if (!bCauldronCatastropheActive)
+	{
+		return;
+	}
+
+	const FVector ExpandedExtent = BoxExtent + FVector(52.0f, 52.0f, 52.0f);
+	for (AWizardStaffCauldronIngredient* Ingredient : SpawnedCauldronIngredients)
+	{
+		if (!IsValid(Ingredient) || Ingredient->IsScored())
+		{
+			continue;
+		}
+
+		const FVector LocalOffset = BoxRotation.UnrotateVector(Ingredient->GetActorLocation() - BoxCenter);
+		if (FMath::Abs(LocalOffset.X) <= ExpandedExtent.X
+			&& FMath::Abs(LocalOffset.Y) <= ExpandedExtent.Y
+			&& FMath::Abs(LocalOffset.Z) <= ExpandedExtent.Z)
+		{
+			OutIngredients.Add(Ingredient);
+		}
+	}
+}
+
+void AWizardStaffGameMode::GatherCauldronIngredientsInBonkArc(const AWizardStaffWizardCharacter* Attacker, TArray<AWizardStaffCauldronIngredient*>& OutIngredients) const
+{
+	OutIngredients.Reset();
+	if (!bCauldronCatastropheActive || !IsValid(Attacker))
+	{
+		return;
+	}
+
+	FVector Forward = Attacker->GetActorForwardVector();
+	Forward.Z = 0.0f;
+	if (!Forward.Normalize())
+	{
+		return;
+	}
+
+	const FVector AttackerLocation = Attacker->GetActorLocation();
+	const float MaxReach = FMath::Max(Attacker->GetQuickBonkRange() + 140.0f, 260.0f);
+	const float MaxReachSquared = FMath::Square(MaxReach);
+	constexpr float MinForwardDot = -0.35f;
+	constexpr float MaxVerticalOffset = 160.0f;
+
+	for (AWizardStaffCauldronIngredient* Ingredient : SpawnedCauldronIngredients)
+	{
+		if (!IsValid(Ingredient) || Ingredient->IsScored())
+		{
+			continue;
+		}
+
+		FVector ToIngredient = Ingredient->GetActorLocation() - AttackerLocation;
+		if (FMath::Abs(ToIngredient.Z) > MaxVerticalOffset)
+		{
+			continue;
+		}
+
+		ToIngredient.Z = 0.0f;
+		if (ToIngredient.SizeSquared() <= MaxReachSquared && ToIngredient.Normalize() && FVector::DotProduct(Forward, ToIngredient) >= MinForwardDot)
+		{
+			OutIngredients.Add(Ingredient);
+		}
+	}
+}
+
+void AWizardStaffGameMode::NotifyCauldronWizardBonked(AWizardStaffWizardCharacter* Attacker, AWizardStaffWizardCharacter* Target)
+{
+	if (!HasAuthority() || !bCauldronCatastropheActive || !IsValid(Attacker) || !IsValid(Target) || Attacker == Target)
+	{
+		return;
+	}
+
+	ApplyCauldronVialInstabilityForEnemyBonk(Attacker, Target);
+
+	if (Target == CauldronBankingWizard.Get())
+	{
+		EndCauldronBanking(TEXT("Enemy bonk"));
+	}
+
+	if (bCauldronCurseDepositSequenceActive)
+	{
+		if (IsValid(ActiveCauldronArena))
+		{
+			ActiveCauldronArena->SetCurseWarningActive(false);
+			ActiveCauldronArena->SetCurseDepositWarningActive(true);
+		}
+	}
+	else if (bCauldronCurseGrounded)
+	{
+		return;
+	}
+
+	const int32 AttackerIndex = GetPlayerIndexForWizard(Attacker);
+	const int32 TargetIndex = GetPlayerIndexForWizard(Target);
+	if (AttackerIndex == CauldronCursedPlayerIndex && TargetIndex != INDEX_NONE)
+	{
+		CauldronCursedPlayerIndex = TargetIndex;
+		LastCauldronCursedPlayerIndex = TargetIndex;
+		for (AWizardStaffWizardCharacter* Wizard : GetCurrentWizards())
+		{
+			if (Wizard)
+			{
+				Wizard->SetCauldronCurseState(GetPlayerIndexForWizard(Wizard) == TargetIndex, CauldronCurseRemainingTime);
+			}
+		}
+		PublishReplicatedGameplayEvent(EWizardReplicatedGameplayEventType::CauldronCurse, FString::Printf(TEXT("P%d passed the curse to P%d"), AttackerIndex + 1, TargetIndex + 1), AttackerIndex, TargetIndex, CauldronCurseRemainingTime, false);
+		SyncReplicatedObservableState();
+	}
+}
+
+void AWizardStaffGameMode::NotifyCauldronCursedWizardStaffSnapped(AWizardStaffWizardCharacter* Wizard)
+{
+	if (!HasAuthority() || !bCauldronCatastropheActive || bCauldronCurseGrounded || !IsValid(Wizard)
+		|| GetPlayerIndexForWizard(Wizard) != CauldronCursedPlayerIndex)
+	{
+		return;
+	}
+
+	AActor* SnappedSegment = nullptr;
+	for (int32 SegmentIndex = LooseSnappedSegments.Num() - 1; SegmentIndex >= 0; --SegmentIndex)
+	{
+		const FWizardTrackedLooseSegment& TrackedSegment = LooseSnappedSegments[SegmentIndex];
+		if (TrackedSegment.SourceWizard.Get() == Wizard && IsValid(TrackedSegment.Actor.Get()))
+		{
+			SnappedSegment = TrackedSegment.Actor.Get();
+			break;
+		}
+	}
+
+	CauldronGroundCurseSegment = SnappedSegment;
+	CauldronGroundCurseLastLocation = SnappedSegment ? SnappedSegment->GetActorLocation() : Wizard->GetCauldronCurseOrbWorldLocation();
+	bCauldronCurseGrounded = true;
+	CauldronCursedPlayerIndex = INDEX_NONE;
+	Wizard->SetCauldronCurseState(false, 0.0f);
+	if (SnappedSegment)
+	{
+		Wizard->AttachCauldronCurseOrbToLooseSegment(SnappedSegment);
+	}
+	else
+	{
+		Wizard->DetachCauldronCurseOrbAtWorldLocation(CauldronGroundCurseLastLocation);
+	}
+	PublishReplicatedGameplayEvent(EWizardReplicatedGameplayEventType::CauldronCurse, TEXT("The cursed staff segment hit the ground"), INDEX_NONE, INDEX_NONE, CauldronCurseRemainingTime, false);
+	SyncReplicatedObservableState();
+}
+
+void AWizardStaffGameMode::UpdateCauldronCatastrophe(float DeltaSeconds)
+{
+	if (!HasAuthority() || !bCauldronCatastropheActive)
+	{
+		return;
+	}
+
+	CauldronRemainingTime = FMath::Max(CauldronRemainingTime - DeltaSeconds, 0.0f);
+	if (CauldronRemainingTime <= 0.0f)
+	{
+		EndCauldronCatastropheTrial();
+		return;
+	}
+
+	UpdateCauldronLastSafePositions();
+	UpdateCauldronIntakeRelocation(DeltaSeconds);
+	UpdateCauldronBanking(DeltaSeconds);
+	UpdateCauldronCurseDepositSequence(DeltaSeconds);
+
+	for (int32 VialIndex = SpawnedCauldronVials.Num() - 1; VialIndex >= 0; --VialIndex)
+	{
+		if (!IsValid(SpawnedCauldronVials[VialIndex]))
+		{
+			SpawnedCauldronVials.RemoveAtSwap(VialIndex);
+		}
+	}
+
+	for (int32 RespawnIndex = PendingCauldronVialRespawns.Num() - 1; RespawnIndex >= 0; --RespawnIndex)
+	{
+		PendingCauldronVialRespawns[RespawnIndex] -= DeltaSeconds;
+		if (PendingCauldronVialRespawns[RespawnIndex] <= 0.0f)
+		{
+			SpawnCauldronVial();
+			PendingCauldronVialRespawns.RemoveAtSwap(RespawnIndex);
+		}
+	}
+
+
+	const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+	for (int32 HazardIndex = SpawnedCauldronHazards.Num() - 1; HazardIndex >= 0; --HazardIndex)
+	{
+		AWizardStaffCauldronHazard* Hazard = SpawnedCauldronHazards[HazardIndex];
+		const TWeakObjectPtr<AWizardStaffCauldronHazard> HazardKey(Hazard);
+		const float* ExpirationTime = CauldronHazardExpirationTimes.Find(HazardKey);
+		if (!IsValid(Hazard) || (ExpirationTime && Now >= *ExpirationTime))
+		{
+			CauldronHazardExpirationTimes.Remove(HazardKey);
+			if (IsValid(Hazard))
+			{
+				Hazard->Destroy();
+			}
+			SpawnedCauldronHazards.RemoveAtSwap(HazardIndex);
+		}
+	}
+	UpdateCauldronHazardEffects();
+
+	if (bCauldronCurseDepositSequenceActive)
+	{
+		if (IsValid(ActiveCauldronArena))
+		{
+			ActiveCauldronArena->SetCurseWarningActive(false);
+			ActiveCauldronArena->SetCurseDepositWarningActive(true);
+		}
+	}
+	else if (bCauldronCurseGrounded)
+	{
+		if (IsValid(ActiveCauldronArena))
+		{
+			ActiveCauldronArena->SetCurseWarningActive(false);
+		}
+		if (AActor* GroundSegment = CauldronGroundCurseSegment.Get())
+		{
+			CauldronGroundCurseLastLocation = GroundSegment->GetActorLocation();
+		}
+		CauldronCurseRemainingTime = FMath::Max(CauldronCurseRemainingTime - DeltaSeconds, 0.0f);
+		if (CauldronCurseRemainingTime <= 0.0f)
+		{
+			ExplodeGroundedCauldronCurse();
+		}
+	}
+	else if (CauldronCursedPlayerIndex != INDEX_NONE)
+	{
+		if (IsValid(ActiveCauldronArena))
+		{
+			ActiveCauldronArena->SetCurseWarningActive(false);
+		}
+		AWizardStaffWizardCharacter* Holder = GetWizardForPlayerIndex(CauldronCursedPlayerIndex);
+		if (!IsValid(Holder) || Holder->IsReadableOutOfArenaRespawning())
+		{
+			ClearCauldronCurse(true);
+		}
+		else
+		{
+			const float CountdownRate = Holder->IsInStaffClash() ? CauldronCatastropheTuning.StaffClashCountdownRate : 1.0f;
+			CauldronCurseRemainingTime = FMath::Max(CauldronCurseRemainingTime - (DeltaSeconds * FMath::Clamp(CountdownRate, 0.0f, 1.0f)), 0.0f);
+			Holder->SetCauldronCurseState(true, CauldronCurseRemainingTime);
+			if (CauldronCurseRemainingTime <= 0.0f)
+			{
+				ExplodeCauldronCurse();
+			}
+		}
+	}
+	else
+	{
+		CauldronNextCurseTime -= DeltaSeconds;
+		if (IsValid(ActiveCauldronArena))
+		{
+			ActiveCauldronArena->SetCurseWarningActive(CauldronNextCurseTime > 0.0f && CauldronNextCurseTime <= 3.5f);
+		}
+		if (CauldronNextCurseTime <= 0.0f)
+		{
+			AssignCauldronCurse();
+		}
+	}
+}
+
+void AWizardStaffGameMode::CleanupCauldronGameplayState()
+{
+	EndCauldronBanking(TEXT("Trial cleanup"), false);
+	bCauldronCatastropheActive = false;
+	CauldronRemainingTime = 0.0f;
+	PendingCauldronIngredientRespawns.Reset();
+	PendingCauldronVialRespawns.Reset();
+
+	CauldronNextCurseTime = 0.0f;
+	LastCauldronCursedPlayerIndex = INDEX_NONE;
+	bCauldronCurseDepositSequenceActive = false;
+	CauldronCurseDepositSequenceRemainingTime = 0.0f;
+	ResetCauldronIntakeState();
+	ClearCauldronCurse(false);
+
+	for (AWizardStaffCauldronIngredient* Ingredient : SpawnedCauldronIngredients)
+	{
+		if (IsValid(Ingredient))
+		{
+			Ingredient->Destroy();
+		}
+	}
+	SpawnedCauldronIngredients.Reset();
+	ClearCauldronVials(true);
+	ResetCauldronSpillState();
+
+	for (AWizardStaffCauldronHazard* Hazard : SpawnedCauldronHazards)
+	{
+		if (IsValid(Hazard))
+		{
+			Hazard->Destroy();
+		}
+	}
+	SpawnedCauldronHazards.Reset();
+	CauldronHazardExpirationTimes.Reset();
+	for (AWizardStaffCauldronCurseBomb* Bomb : SpawnedCauldronCurseDepositBombs)
+	{
+		if (IsValid(Bomb))
+		{
+			Bomb->Destroy();
+		}
+	}
+	SpawnedCauldronCurseDepositBombs.Reset();
+	ClearCauldronDepositArcs();
+
+	if (IsValid(ActiveCauldronArena))
+	{
+		ActiveCauldronArena->SetCurseWarningActive(false);
+		ActiveCauldronArena->SetCurseDepositWarningActive(false);
+	}
+
+	for (AWizardStaffWizardCharacter* Wizard : GetCurrentWizards())
+	{
+		if (Wizard)
+		{
+			Wizard->ClearCauldronSlipperySkid();
+			Wizard->SetCauldronHazardMovementMultipliers(1.0f, 1.0f, 1.0f, 1.0f, 1.0f);
+			Wizard->SetCauldronStickyTetherState(false);
+			Wizard->SetCauldronCurseState(false, 0.0f);
+		}
+	}
+}
+
+void AWizardStaffGameMode::CleanupCauldronCatastrophe()
+{
+	CleanupCauldronGameplayState();
+
+	if (IsValid(ActiveCauldronArena))
+	{
+		ActiveCauldronArena->SetCurseDepositWarningActive(false);
+		ActiveCauldronArena->Destroy();
+	}
+	ActiveCauldronArena = nullptr;
+}
+
+void AWizardStaffGameMode::SpawnCauldronIngredient()
+{
+	if (!HasAuthority() || !bCauldronCatastropheActive || SpawnedCauldronIngredients.Num() >= FMath::Max(CauldronCatastropheTuning.MaximumActiveIngredients, 1))
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	const float Angle = FMath::FRandRange(0.0f, 2.0f * UE_PI);
+	const FVector SpawnLocation = GetArenaCenter() + FVector(FMath::Cos(Angle), FMath::Sin(Angle), 0.0f) * CauldronCatastropheTuning.IngredientSpawnRadius + FVector(0.0f, 0.0f, 90.0f);
+	FActorSpawnParameters SpawnParameters;
+	SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+	AWizardStaffCauldronIngredient* Ingredient = World->SpawnActor<AWizardStaffCauldronIngredient>(AWizardStaffCauldronIngredient::StaticClass(), SpawnLocation, FRotator::ZeroRotator, SpawnParameters);
+	if (Ingredient)
+	{
+		Ingredient->InitializeIngredient(FMath::RandRange(0, 3));
+		SpawnedCauldronIngredients.Add(Ingredient);
+	}
+}
+
+EWizardCauldronVialType AWizardStaffGameMode::ParseCauldronVialType(const FString& TypeText) const
+{
+	if (TypeText.Equals(TEXT("Speed"), ESearchCase::IgnoreCase))
+	{
+		return EWizardCauldronVialType::Speed;
+	}
+	if (TypeText.Equals(TEXT("BurdeningPower"), ESearchCase::IgnoreCase) || TypeText.Equals(TEXT("Burdening Power"), ESearchCase::IgnoreCase))
+	{
+		return EWizardCauldronVialType::BurdeningPower;
+	}
+	UE_LOG(LogTemp, Warning, TEXT("Unknown Cauldron vial type '%s'. Use Speed or BurdeningPower."), *TypeText);
+	return EWizardCauldronVialType::None;
+}
+
+bool AWizardStaffGameMode::ValidateCauldronVialState(const AWizardStaffWizardCharacter* Wizard, FString& OutReport) const
+{
+	if (!IsValid(Wizard) || !Wizard->StaffComponent)
+	{
+		OutReport = TEXT("invalid wizard or staff component");
+		return false;
+	}
+
+	const int32 PlayerIndex = GetPlayerIndexForWizard(Wizard);
+	const TArray<FCauldronVialStackEntry>* Stack = CauldronVialStacks.Find(Wizard);
+	const TArray<FName>& SegmentTags = Wizard->StaffComponent->GetStaffSegmentTags();
+	TSet<FName> StackTags;
+	TSet<FName> StaffVialTags;
+	bool bValid = true;
+	FString Failure;
+
+	if (Stack)
+	{
+		for (const FCauldronVialStackEntry& Entry : *Stack)
+		{
+			if (Entry.SegmentTag.IsNone() || StackTags.Contains(Entry.SegmentTag))
+			{
+				bValid = false;
+				Failure = FString::Printf(TEXT("duplicate or invalid stack tag %s"), *Entry.SegmentTag.ToString());
+				break;
+			}
+			StackTags.Add(Entry.SegmentTag);
+			if (!SegmentTags.Contains(Entry.SegmentTag))
+			{
+				bValid = false;
+				Failure = FString::Printf(TEXT("stack tag %s has no staff segment"), *Entry.SegmentTag.ToString());
+				break;
+			}
+		}
+	}
+
+	for (const FName SegmentTag : SegmentTags)
+	{
+		if (SegmentTag.ToString().StartsWith(TEXT("CauldronVial_")))
+		{
+			StaffVialTags.Add(SegmentTag);
+			if (!StackTags.Contains(SegmentTag))
+			{
+				bValid = false;
+				Failure = FString::Printf(TEXT("staff vial tag %s has no stack entry"), *SegmentTag.ToString());
+				break;
+			}
+		}
+	}
+
+	const int32 StackCount = Stack ? Stack->Num() : 0;
+	const EWizardCauldronVialType ExpectedActive = StackCount > 0 ? Stack->Last().Type : EWizardCauldronVialType::None;
+	if (Wizard->GetReadableCauldronVialCount() != StackCount)
+	{
+		bValid = false;
+		Failure = TEXT("readable vial count differs from stack count");
+	}
+	else if (Wizard->GetReadableActiveCauldronVial() != ExpectedActive)
+	{
+		bValid = false;
+		Failure = TEXT("readable active vial differs from newest stack entry");
+	}
+	else if (StackCount > 0 && Wizard->StaffComponent->GetTopStaffSegmentTag() != Stack->Last().SegmentTag)
+	{
+		// This can be a safe blocked deposit when an unrelated segment is on top.
+		Failure = FString::Printf(TEXT("top segment %s blocks newest vial %s"), *Wizard->StaffComponent->GetTopStaffSegmentTag().ToString(), *Stack->Last().SegmentTag.ToString());
+	}
+
+	const FString FailureSuffix = Failure.IsEmpty() ? FString() : FString::Printf(TEXT(" | %s"), *Failure);
+	OutReport = FString::Printf(
+		TEXT("%s | stack %d | staff vial tags %d | readable %d | active %s | top %s%s"),
+		bValid ? TEXT("VALID") : TEXT("INVALID"),
+		StackCount,
+		StaffVialTags.Num(),
+		Wizard->GetReadableCauldronVialCount(),
+		*GetWizardCauldronVialDisplayName(Wizard->GetReadableActiveCauldronVial()),
+		*Wizard->StaffComponent->GetTopStaffSegmentTag().ToString(),
+		*FailureSuffix);
+	if (!bValid)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Cauldron vial mismatch P%d: %s"), PlayerIndex + 1, *OutReport);
+	}
+	return bValid;
+}
+
+bool AWizardStaffGameMode::IsCauldronVialSpawnLocationValid(const FVector& CandidateLocation) const
+{
+	const float CandidateRadius = FVector::Dist2D(CandidateLocation, GetArenaCenter());
+	if (CandidateRadius < CauldronCatastropheTuning.VialMinimumCauldronDistance
+		|| CandidateRadius > FMath::Max(GetCurrentPlayBoundsHalfSize() - CauldronCatastropheTuning.VialMinimumDropOffDistance, 0.0f))
+	{
+		return false;
+	}
+
+	for (const AWizardStaffWizardCharacter* Wizard : GetCurrentWizards())
+	{
+		if (IsValid(Wizard) && FVector::DistSquared2D(CandidateLocation, Wizard->GetActorLocation()) < FMath::Square(CauldronCatastropheTuning.VialMinimumPlayerSpacing))
+		{
+			return false;
+		}
+	}
+	for (const AWizardStaffCauldronVialPickup* Vial : SpawnedCauldronVials)
+	{
+		if (IsValid(Vial) && FVector::DistSquared2D(CandidateLocation, Vial->GetActorLocation()) < FMath::Square(CauldronCatastropheTuning.VialMinimumVialSpacing))
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+void AWizardStaffGameMode::SpawnCauldronVial(EWizardCauldronVialType ForcedVialType)
+{
+	if (!HasAuthority() || !bCauldronCatastropheActive || SpawnedCauldronVials.Num() >= FMath::Max(CauldronCatastropheTuning.MaximumActiveVials, 1))
+	{
+		return;
+	}
+
+	FVector SpawnLocation = GetArenaCenter() + FVector(CauldronCatastropheTuning.VialMinimumCauldronDistance, 0.0f, 0.0f);
+	const float MaxRadius = FMath::Max(CauldronCatastropheTuning.VialMinimumCauldronDistance, FMath::Min(CauldronCatastropheTuning.VialSpawnRadius, GetCurrentPlayBoundsHalfSize() - CauldronCatastropheTuning.VialMinimumDropOffDistance));
+	for (int32 Attempt = 0; Attempt < 12; ++Attempt)
+	{
+		const float Angle = FMath::FRandRange(0.0f, 2.0f * UE_PI);
+		const float Radius = FMath::FRandRange(CauldronCatastropheTuning.VialMinimumCauldronDistance, MaxRadius);
+		const FVector Candidate = GetArenaCenter() + FVector(FMath::Cos(Angle), FMath::Sin(Angle), 0.0f) * Radius;
+		if (IsCauldronVialSpawnLocationValid(Candidate))
+		{
+			SpawnLocation = Candidate;
+			break;
+		}
+	}
+
+	const EWizardCauldronVialType VialType = ForcedVialType == EWizardCauldronVialType::None
+		? (FMath::RandBool() ? EWizardCauldronVialType::Speed : EWizardCauldronVialType::BurdeningPower)
+		: ForcedVialType;
+	SpawnCauldronVialAtLocation(VialType, SpawnLocation, false);
+}
+
+bool AWizardStaffGameMode::SpawnCauldronVialAtLocation(EWizardCauldronVialType VialType, const FVector& SpawnLocation, bool bSpilledPickup)
+{
+	if (!HasAuthority() || !bCauldronCatastropheActive || VialType == EWizardCauldronVialType::None)
+	{
+		return false;
+	}
+
+	if (!bSpilledPickup && SpawnedCauldronVials.Num() >= FMath::Max(CauldronCatastropheTuning.MaximumActiveVials, 1))
+	{
+		return false;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return false;
+	}
+
+	FActorSpawnParameters SpawnParameters;
+	SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+	AWizardStaffCauldronVialPickup* Vial = World->SpawnActor<AWizardStaffCauldronVialPickup>(
+		AWizardStaffCauldronVialPickup::StaticClass(),
+		SpawnLocation + FVector(0.0f, 0.0f, 2.0f),
+		FRotator::ZeroRotator,
+		SpawnParameters);
+	if (!Vial)
+	{
+		return false;
+	}
+
+	Vial->InitializeVial(VialType, CauldronCatastropheTuning.VialPickupRadius);
+	SpawnedCauldronVials.Add(Vial);
+	if (bSpilledPickup)
+	{
+		CauldronSpilledVialPickups.Add(Vial);
+	}
+	return true;
+}
+
+bool AWizardStaffGameMode::HandleCauldronVialCollected(AWizardStaffWizardCharacter* Collector, EWizardCauldronVialType VialType)
+{
+	if (!HasAuthority() || !bCauldronCatastropheActive || !IsValid(Collector) || VialType == EWizardCauldronVialType::None)
+	{
+		return false;
+	}
+
+	if (!GrantCauldronVial(Collector, VialType))
+	{
+		return false;
+	}
+	PendingCauldronVialRespawns.Add(FMath::Max(CauldronCatastropheTuning.VialRespawnDelay, 0.0f));
+	const int32 PlayerIndex = GetPlayerIndexForWizard(Collector);
+	AWizardStaffHUD::PushGameplayMessage(this, FString::Printf(TEXT("P%d collected %s vial"), PlayerIndex + 1, *GetWizardCauldronVialDisplayName(VialType)), GetWizardCauldronVialColor(VialType).ToFColor(true), 1.8f, EWizardHudMessageCategory::Gameplay);
+	return true;
+}
+
+bool AWizardStaffGameMode::GrantCauldronVial(AWizardStaffWizardCharacter* Wizard, EWizardCauldronVialType VialType)
+{
+	if (!HasAuthority() || !bCauldronCatastropheActive || !IsValid(Wizard) || !Wizard->StaffComponent || VialType == EWizardCauldronVialType::None)
+	{
+		return false;
+	}
+
+	const FName SegmentTag(*FString::Printf(TEXT("CauldronVial_%d"), NextCauldronVialPickupOrder));
+	const int32 PreviousCount = Wizard->StaffComponent->GetSegmentCount();
+	const int32 NewCount = Wizard->StaffComponent->AddStaffSegmentWithTag(SegmentTag, GetWizardCauldronVialColor(VialType));
+	if (NewCount <= PreviousCount)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Cauldron vial grant rejected: staff cannot add a segment."));
+		return false;
+	}
+
+	FCauldronVialStackEntry& NewEntry = CauldronVialStacks.FindOrAdd(Wizard).AddDefaulted_GetRef();
+	NewEntry.Type = VialType;
+	NewEntry.SegmentTag = SegmentTag;
+	NewEntry.PickupOrder = NextCauldronVialPickupOrder++;
+	RefreshCauldronVialEffects(Wizard);
+	Wizard->SyncReplicatedStaffSegmentCountFromAuthority();
+	return true;
+}
+
+void AWizardStaffGameMode::NotifyCauldronVialSegmentSnapped(AWizardStaffWizardCharacter* Wizard, FName RemovedSegmentTag)
+{
+	if (!HasAuthority() || !bCauldronCatastropheActive || !IsValid(Wizard) || RemovedSegmentTag.IsNone())
+	{
+		return;
+	}
+
+	TArray<FCauldronVialStackEntry>* Stack = CauldronVialStacks.Find(Wizard);
+	if (!Stack)
+	{
+		return;
+	}
+	for (int32 EntryIndex = Stack->Num() - 1; EntryIndex >= 0; --EntryIndex)
+	{
+		if ((*Stack)[EntryIndex].SegmentTag == RemovedSegmentTag)
+		{
+			const FString LostVialName = GetWizardCauldronVialDisplayName((*Stack)[EntryIndex].Type);
+			Stack->RemoveAt(EntryIndex);
+			AWizardStaffHUD::PushGameplayMessage(this, FString::Printf(TEXT("%s vial shattered"), *LostVialName), FColor::Red, 1.6f, EWizardHudMessageCategory::Gameplay);
+			RefreshCauldronVialEffects(Wizard);
+			return;
+		}
+	}
+}
+
+bool AWizardStaffGameMode::IsCauldronWithinQuickBonkStrike(const AWizardStaffWizardCharacter* Wizard) const
+{
+	if (!IsValid(Wizard) || !IsValid(ActiveCauldronArena) || bCauldronIntakeRelocating || ActiveCauldronIntake == EWizardCauldronIntakeDirection::None)
+	{
+		return false;
+	}
+
+	FVector Forward = Wizard->GetActorForwardVector();
+	Forward.Z = 0.0f;
+	if (!Forward.Normalize())
+	{
+		return false;
+	}
+
+	const FVector IntakeCenter = ActiveCauldronArena->GetIntakeWorldLocation(ActiveCauldronIntake);
+	const float BankingMaximumDistance = FMath::Max(CauldronCatastropheTuning.BankingMaximumDistanceFromIntake, 50.0f);
+	if (FVector::DistSquared2D(Wizard->GetActorLocation(), IntakeCenter) > FMath::Square(BankingMaximumDistance))
+	{
+		return false;
+	}
+
+	const float IntakeAcceptanceRadius = FMath::Max(CauldronCatastropheTuning.ActiveIntakeAcceptanceRadius, 50.0f);
+	const auto IsWithinIntakeAcceptance = [&IntakeCenter, IntakeAcceptanceRadius](const FVector& CandidatePoint)
+	{
+		return FVector::DistSquared2D(CandidatePoint, IntakeCenter) <= FMath::Square(IntakeAcceptanceRadius)
+			&& FMath::Abs(CandidatePoint.Z - IntakeCenter.Z) <= 240.0f;
+	};
+
+	const FVector ProjectedStrikePoint = Wizard->GetActorLocation() + (Forward * Wizard->GetQuickBonkRange());
+	if (IsWithinIntakeAcceptance(ProjectedStrikePoint))
+	{
+		return true;
+	}
+
+	if (const UWizardStaffComponent* StaffComponent = Wizard->StaffComponent)
+	{
+		if (const UBoxComponent* StaffCollisionBox = StaffComponent->GetStaffCollisionBox())
+		{
+			const FTransform CollisionTransform = StaffCollisionBox->GetComponentTransform();
+			const FVector CollisionExtent = StaffCollisionBox->GetScaledBoxExtent();
+			const FVector LocalIntakeCenter = CollisionTransform.InverseTransformPosition(IntakeCenter);
+			const FVector ClosestLocalPoint = LocalIntakeCenter.BoundToBox(-CollisionExtent, CollisionExtent);
+			const FVector ClosestStaffPoint = CollisionTransform.TransformPosition(ClosestLocalPoint);
+			return IsWithinIntakeAcceptance(ClosestStaffPoint);
+		}
+	}
+
+	return false;
+}
+
+bool AWizardStaffGameMode::HandleCauldronQuickBonk(AWizardStaffWizardCharacter* Attacker, int32 BonkSequence)
+{
+	if (!HasAuthority() || !bCauldronCatastropheActive || !IsValid(Attacker) || BonkSequence <= 0 || !IsCauldronWithinQuickBonkStrike(Attacker))
+	{
+		return false;
+	}
+
+	if (!bCauldronCurseGrounded && GetPlayerIndexForWizard(Attacker) == CauldronCursedPlayerIndex)
+	{
+		return BeginCauldronCurseDeposit(Attacker, BonkSequence);
+	}
+
+	return StartCauldronBanking(Attacker, BonkSequence);
+}
+
+bool AWizardStaffGameMode::BeginCauldronCurseDeposit(AWizardStaffWizardCharacter* Wizard, int32 BonkSequence)
+{
+	const int32 WizardIndex = GetPlayerIndexForWizard(Wizard);
+	if (!HasAuthority() || !bCauldronCatastropheActive || bCauldronCurseDepositSequenceActive || !IsValid(Wizard)
+		|| WizardIndex == INDEX_NONE || WizardIndex != CauldronCursedPlayerIndex || BonkSequence <= 0 || !IsCauldronWithinQuickBonkStrike(Wizard))
+	{
+		return false;
+	}
+
+	EndCauldronBanking(TEXT("Cursed orb deposit"), false);
+	ClearCauldronCurse(false);
+	bCauldronCurseDepositSequenceActive = true;
+	const int32 ExplosionCount = FMath::Clamp(CauldronCatastropheTuning.CurseDepositExplosionCount, 1, 12);
+	CauldronCurseDepositSequenceRemainingTime = FMath::Max(CauldronCatastropheTuning.CurseDepositBoilWarningDuration, 0.1f)
+		+ (FMath::Max(ExplosionCount - 1, 0) * FMath::Max(CauldronCatastropheTuning.CurseDepositExplosionLaunchInterval, 0.01f))
+		+ FMath::Max(CauldronCatastropheTuning.CurseDepositExplosionFlightDuration, 0.05f)
+		+ 0.30f;
+	if (IsValid(ActiveCauldronArena))
+	{
+		ActiveCauldronArena->SetCurseWarningActive(false);
+		ActiveCauldronArena->SetCurseDepositWarningActive(true);
+		ActiveCauldronArena->TriggerDepositPulse();
+	}
+	SpawnCauldronCurseDepositBombs();
+	PublishReplicatedGameplayEvent(EWizardReplicatedGameplayEventType::CauldronCurse, FString::Printf(TEXT("P%d fed the curse to the cauldron!"), WizardIndex + 1), WizardIndex, INDEX_NONE, static_cast<float>(ExplosionCount), false);
+	SyncReplicatedObservableState();
+	return true;
+}
+
+void AWizardStaffGameMode::SpawnCauldronCurseDepositBombs()
+{
+	UWorld* World = GetWorld();
+	if (!HasAuthority() || !World || !IsValid(ActiveCauldronArena))
+	{
+		return;
+	}
+
+	const int32 ExplosionCount = FMath::Clamp(CauldronCatastropheTuning.CurseDepositExplosionCount, 1, 12);
+	const float MinimumDistance = FMath::Max(CauldronCatastropheTuning.CurseDepositExplosionMinimumDistance, 0.0f);
+	const float SafeMaximumDistance = FMath::Max(CauldronCatastropheTuning.CurseDepositExplosionMinimumDistance, FMath::Min(CauldronCatastropheTuning.CurseDepositExplosionMaximumDistance, GetCurrentPlayBoundsHalfSize() - 240.0f));
+	const float OriginHeight = 150.0f;
+	const FVector Origin = ActiveCauldronArena->GetAcceptanceCenter() + FVector(0.0f, 0.0f, OriginHeight);
+	const float SectorAngle = (2.0f * UE_PI) / static_cast<float>(ExplosionCount);
+	const float AngleOffset = FMath::FRandRange(0.0f, 2.0f * UE_PI);
+	const float AngularJitter = SectorAngle * FMath::Clamp(CauldronCatastropheTuning.CurseDepositExplosionAngularJitterFraction, 0.0f, 0.49f);
+	TArray<float> TargetAngles;
+	TargetAngles.Reserve(ExplosionCount);
+	for (int32 SectorIndex = 0; SectorIndex < ExplosionCount; ++SectorIndex)
+	{
+		const float SectorCenter = AngleOffset + ((static_cast<float>(SectorIndex) + 0.5f) * SectorAngle);
+		TargetAngles.Add(SectorCenter + FMath::FRandRange(-AngularJitter, AngularJitter));
+	}
+	for (int32 ShuffleIndex = TargetAngles.Num() - 1; ShuffleIndex > 0; --ShuffleIndex)
+	{
+		TargetAngles.Swap(ShuffleIndex, FMath::RandRange(0, ShuffleIndex));
+	}
+
+	for (int32 ExplosionIndex = 0; ExplosionIndex < ExplosionCount; ++ExplosionIndex)
+	{
+		const float Angle = TargetAngles[ExplosionIndex];
+		const float Distance = FMath::Sqrt(FMath::FRandRange(FMath::Square(MinimumDistance), FMath::Square(SafeMaximumDistance)));
+		const FVector TargetLocation = GetArenaCenter() + FVector(FMath::Cos(Angle), FMath::Sin(Angle), 0.0f) * Distance + FVector(0.0f, 0.0f, 8.0f);
+		FActorSpawnParameters SpawnParameters;
+		SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		AWizardStaffCauldronCurseBomb* Bomb = World->SpawnActor<AWizardStaffCauldronCurseBomb>(AWizardStaffCauldronCurseBomb::StaticClass(), TargetLocation, FRotator::ZeroRotator, SpawnParameters);
+		if (Bomb)
+		{
+			Bomb->InitializeBomb(
+				Origin,
+				TargetLocation,
+				CauldronCatastropheTuning.CurseDepositExplosionRadius,
+				FMath::Max(CauldronCatastropheTuning.CurseDepositBoilWarningDuration, 0.1f) + (ExplosionIndex * FMath::Max(CauldronCatastropheTuning.CurseDepositExplosionLaunchInterval, 0.01f)),
+				CauldronCatastropheTuning.CurseDepositExplosionFlightDuration,
+				CauldronCatastropheTuning.CurseDepositExplosionHorizontalKnockback,
+				CauldronCatastropheTuning.CurseDepositExplosionVerticalKnockback);
+			SpawnedCauldronCurseDepositBombs.Add(Bomb);
+		}
+	}
+}
+
+void AWizardStaffGameMode::UpdateCauldronCurseDepositSequence(float DeltaSeconds)
+{
+	for (int32 BombIndex = SpawnedCauldronCurseDepositBombs.Num() - 1; BombIndex >= 0; --BombIndex)
+	{
+		if (!IsValid(SpawnedCauldronCurseDepositBombs[BombIndex]))
+		{
+			SpawnedCauldronCurseDepositBombs.RemoveAtSwap(BombIndex);
+		}
+	}
+
+	if (!bCauldronCurseDepositSequenceActive)
+	{
+		return;
+	}
+
+	CauldronCurseDepositSequenceRemainingTime = FMath::Max(CauldronCurseDepositSequenceRemainingTime - FMath::Max(DeltaSeconds, 0.0f), 0.0f);
+	if (CauldronCurseDepositSequenceRemainingTime > 0.0f)
+	{
+		return;
+	}
+
+	bCauldronCurseDepositSequenceActive = false;
+	if (IsValid(ActiveCauldronArena))
+	{
+		ActiveCauldronArena->SetCurseDepositWarningActive(false);
+	}
+	CauldronNextCurseTime = FMath::Max(CauldronCatastropheTuning.CurseCadence, 1.0f);
+	SyncReplicatedObservableState();
+}
+
+int32 AWizardStaffGameMode::DepositCauldronVials(AWizardStaffWizardCharacter* Wizard, int32 BonkSequence)
+{
+	return StartCauldronBanking(Wizard, BonkSequence, true) ? 1 : 0;
+}
+
+bool AWizardStaffGameMode::StartCauldronBanking(AWizardStaffWizardCharacter* Wizard, int32 BonkSequence, bool bBypassIntakeStrike)
+{
+	if (!HasAuthority() || !bCauldronCatastropheActive || !IsValid(Wizard) || BonkSequence == 0 || CauldronBankingWizard.IsValid()
+		|| bCauldronIntakeRelocating || ActiveCauldronIntake == EWizardCauldronIntakeDirection::None)
+	{
+		return false;
+	}
+
+	if (!bBypassIntakeStrike && !IsCauldronWithinQuickBonkStrike(Wizard))
+	{
+		return false;
+	}
+
+	int32& LastProcessedSequence = LastCauldronDepositBonkSequences.FindOrAdd(Wizard);
+	if (LastProcessedSequence == BonkSequence)
+	{
+		return false;
+	}
+	LastProcessedSequence = BonkSequence;
+
+	if (!IsCauldronBankingWizardValid(Wizard) || !HasValidTopCauldronVial(Wizard))
+	{
+		return false;
+	}
+
+	CauldronBankingWizard = Wizard;
+	++CauldronBankingSessionGeneration;
+	CauldronBankingIntake = ActiveCauldronIntake;
+	CauldronBankingNextTransferRemainingTime = FMath::Max(CauldronCatastropheTuning.BankingInitialDelay, 0.0f);
+	CauldronBankingTransferredCount = 0;
+	CauldronBankingLastEndReason = TEXT("Banking");
+	Wizard->SetCauldronBankingMovementMultipliers(true, CauldronCatastropheTuning.BankingMovementMultiplier, CauldronCatastropheTuning.BankingAccelerationMultiplier);
+	ApplyCauldronBankingReadability();
+	SyncReplicatedObservableState();
+	return true;
+}
+
+void AWizardStaffGameMode::UpdateCauldronBanking(float DeltaSeconds)
+{
+	AWizardStaffWizardCharacter* Banker = CauldronBankingWizard.Get();
+	if (!IsValid(Banker))
+	{
+		if (CauldronBankingIntake != EWizardCauldronIntakeDirection::None)
+		{
+			EndCauldronBanking(TEXT("Banker destroyed"));
+		}
+		return;
+	}
+
+	if (!IsCauldronBankingWizardValid(Banker))
+	{
+		EndCauldronBanking(TEXT("Banker invalid"));
+		return;
+	}
+
+	if (!IsValid(ActiveCauldronArena) || bCauldronIntakeRelocating || ActiveCauldronIntake != CauldronBankingIntake)
+	{
+		EndCauldronBanking(TEXT("Intake unavailable"));
+		return;
+	}
+
+	const float DistanceFromIntake = FVector::Dist2D(Banker->GetActorLocation(), ActiveCauldronArena->GetIntakeWorldLocation(CauldronBankingIntake));
+	if (DistanceFromIntake > FMath::Max(CauldronCatastropheTuning.BankingMaximumDistanceFromIntake, 50.0f))
+	{
+		EndCauldronBanking(TEXT("Left intake range"));
+		return;
+	}
+
+	CauldronBankingNextTransferRemainingTime = FMath::Max(CauldronBankingNextTransferRemainingTime - FMath::Max(DeltaSeconds, 0.0f), 0.0f);
+	ApplyCauldronBankingReadability();
+	if (CauldronBankingNextTransferRemainingTime > 0.0f)
+	{
+		return;
+	}
+
+	if (!TransferNextCauldronBankingVial())
+	{
+		EndCauldronBanking(TEXT("No removable top vial"));
+		return;
+	}
+
+	if (!HasValidTopCauldronVial(Banker))
+	{
+		EndCauldronBanking(TEXT("Vial stack complete"));
+		return;
+	}
+
+	CauldronBankingNextTransferRemainingTime = FMath::Max(CauldronCatastropheTuning.BankingVialTransferInterval, 0.05f);
+	ApplyCauldronBankingReadability();
+}
+
+bool AWizardStaffGameMode::TransferNextCauldronBankingVial()
+{
+	AWizardStaffWizardCharacter* Banker = CauldronBankingWizard.Get();
+	if (!IsCauldronBankingWizardValid(Banker) || !Banker->StaffComponent)
+	{
+		return false;
+	}
+
+	TArray<FCauldronVialStackEntry>* Stack = CauldronVialStacks.Find(Banker);
+	if (!Stack || Stack->IsEmpty())
+	{
+		return false;
+	}
+
+	const int32 PlayerIndex = GetPlayerIndexForWizard(Banker);
+	const FCauldronVialStackEntry& NewestEntry = Stack->Last();
+	const EWizardCauldronVialType DepositedVialType = NewestEntry.Type;
+	if (PlayerIndex == INDEX_NONE || Banker->StaffComponent->GetTopStaffSegmentTag() != NewestEntry.SegmentTag)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Cauldron banking rejected P%d: top segment does not match newest vial."), PlayerIndex + 1);
+		return false;
+	}
+
+	UStaticMesh* DepositSegmentMesh = nullptr;
+	FTransform DepositSegmentTransform = FTransform::Identity;
+	if (const UStaticMeshComponent* TopSegmentMesh = Banker->StaffComponent->GetTopStaffSegmentMesh())
+	{
+		DepositSegmentMesh = TopSegmentMesh->GetStaticMesh();
+		DepositSegmentTransform = TopSegmentMesh->GetComponentTransform();
+	}
+
+	if (!Banker->StaffComponent->RemoveTopStaffSegment(false))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Cauldron banking rejected P%d: expected vial segment could not be removed."), PlayerIndex + 1);
+		return false;
+	}
+
+	SpawnCauldronDepositArc(DepositSegmentMesh, DepositSegmentTransform, DepositedVialType);
+	Stack->Pop();
+	++CauldronBankingTransferredCount;
+	Banker->SyncReplicatedStaffSegmentCountFromAuthority();
+	RefreshCauldronVialEffects(Banker);
+	Banker->RefreshCauldronCurseOrbAttachment();
+	if (IsValid(ActiveCauldronArena))
+	{
+		ActiveCauldronArena->TriggerDepositPulse();
+	}
+	if (FMath::FRand() <= CauldronCatastropheTuning.DepositHazardChance)
+	{
+		if (DepositedVialType == EWizardCauldronVialType::Speed)
+		{
+			SpawnCauldronHazard(EWizardCauldronHazardType::Slippery);
+		}
+		else if (DepositedVialType == EWizardCauldronVialType::BurdeningPower)
+		{
+			SpawnCauldronHazard(EWizardCauldronHazardType::Sticky);
+		}
+	}
+	AddCauldronScore(PlayerIndex, 1, TEXT("Sequential Vial Deposit"));
+	AWizardStaffHUD::PushGameplayMessage(this, FString::Printf(TEXT("P%d banked 1 vial"), PlayerIndex + 1), FColor::Yellow, 1.2f, EWizardHudMessageCategory::Gameplay);
+	SyncReplicatedObservableState();
+	return true;
+}
+
+void AWizardStaffGameMode::SpawnCauldronDepositArc(UStaticMesh* SegmentMesh, const FTransform& StartTransform, EWizardCauldronVialType VialType)
+{
+	if (!HasAuthority() || !bCauldronCatastropheActive || !IsValid(ActiveCauldronArena) || !SegmentMesh)
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	FActorSpawnParameters SpawnParameters;
+	SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	AWizardStaffCauldronDepositArc* DepositArc = World->SpawnActor<AWizardStaffCauldronDepositArc>(
+		AWizardStaffCauldronDepositArc::StaticClass(),
+		StartTransform.GetLocation(),
+		StartTransform.Rotator(),
+		SpawnParameters);
+	if (!DepositArc)
+	{
+		return;
+	}
+
+	const FVector CauldronTarget = ActiveCauldronArena->GetActorLocation() + FVector(0.0f, 0.0f, 142.0f);
+	DepositArc->InitializeDepositArc(SegmentMesh, StartTransform, CauldronTarget, GetWizardCauldronVialColor(VialType));
+	SpawnedCauldronDepositArcs.Add(DepositArc);
+}
+
+void AWizardStaffGameMode::ClearCauldronDepositArcs()
+{
+	for (AWizardStaffCauldronDepositArc* DepositArc : SpawnedCauldronDepositArcs)
+	{
+		if (IsValid(DepositArc))
+		{
+			DepositArc->Destroy();
+		}
+	}
+	SpawnedCauldronDepositArcs.Reset();
+}
+void AWizardStaffGameMode::EndCauldronBanking(const FString& EndReason, bool bRelocateAfterSuccess)
+{
+	AWizardStaffWizardCharacter* Banker = CauldronBankingWizard.Get();
+	const bool bBankedAnyVials = CauldronBankingTransferredCount > 0;
+	if (IsValid(Banker))
+	{
+		Banker->SetCauldronBankingMovementMultipliers(false);
+	}
+
+	CauldronBankingWizard.Reset();
+	CauldronBankingIntake = EWizardCauldronIntakeDirection::None;
+	CauldronBankingNextTransferRemainingTime = 0.0f;
+	CauldronBankingLastEndReason = EndReason;
+	CauldronBankingTransferredCount = 0;
+	ApplyCauldronBankingReadability();
+	SyncReplicatedObservableState();
+
+	if (bRelocateAfterSuccess && bBankedAnyVials && bCauldronCatastropheActive)
+	{
+		BeginCauldronIntakeRelocation();
+	}
+}
+
+bool AWizardStaffGameMode::IsCauldronBankingWizardValid(const AWizardStaffWizardCharacter* Wizard) const
+{
+	if (!IsValid(Wizard) || !Wizard->GetController() || Wizard->IsReadableOutOfArenaRespawning() || Wizard->IsInStaffClash() || Wizard->IsBroomBoostActive())
+	{
+		return false;
+	}
+
+	const TWeakObjectPtr<AWizardStaffWizardCharacter> WizardKey(const_cast<AWizardStaffWizardCharacter*>(Wizard));
+	return !PendingOutOfArenaRespawns.Contains(WizardKey) && !IsWizardOutOfArena(Wizard);
+}
+
+bool AWizardStaffGameMode::HasValidTopCauldronVial(const AWizardStaffWizardCharacter* Wizard) const
+{
+	if (!IsValid(Wizard) || !Wizard->StaffComponent)
+	{
+		return false;
+	}
+
+	const TArray<FCauldronVialStackEntry>* Stack = CauldronVialStacks.Find(Wizard);
+	return Stack && !Stack->IsEmpty() && Wizard->StaffComponent->GetTopStaffSegmentTag() == Stack->Last().SegmentTag;
+}
+
+void AWizardStaffGameMode::ApplyCauldronBankingReadability()
+{
+	if (!IsValid(ActiveCauldronArena))
+	{
+		return;
+	}
+
+	const bool bBankingActive = CauldronBankingWizard.IsValid();
+	const float FullTransferDuration = CauldronBankingTransferredCount == 0
+		? FMath::Max(CauldronCatastropheTuning.BankingInitialDelay, 0.01f)
+		: FMath::Max(CauldronCatastropheTuning.BankingVialTransferInterval, 0.01f);
+	const float ProgressAlpha = bBankingActive ? FMath::Clamp(1.0f - (CauldronBankingNextTransferRemainingTime / FullTransferDuration), 0.0f, 1.0f) : 0.0f;
+	ActiveCauldronArena->SetIntakeBankingState(bBankingActive, ProgressAlpha);
+}
+
+void AWizardStaffGameMode::UpdateCauldronLastSafePositions()
+{
+	if (!HasAuthority() || !bCauldronCatastropheActive)
+	{
+		return;
+	}
+
+	for (AWizardStaffWizardCharacter* Wizard : GetCurrentWizards())
+	{
+		if (!IsValid(Wizard) || !Wizard->GetController())
+		{
+			continue;
+		}
+
+		const TWeakObjectPtr<AWizardStaffWizardCharacter> WizardKey(Wizard);
+		if (PendingOutOfArenaRespawns.Contains(WizardKey) || !IsCauldronSafeSpillPosition(Wizard->GetActorLocation()))
+		{
+			continue;
+		}
+
+		CauldronLastSafePositions.Add(WizardKey, Wizard->GetActorLocation());
+	}
+
+	for (auto It = CauldronSpilledVialPickups.CreateIterator(); It; ++It)
+	{
+		if (!IsValid(It->Get()))
+		{
+			It.RemoveCurrent();
+		}
+	}
+}
+
+bool AWizardStaffGameMode::IsCauldronSafeSpillPosition(const FVector& Location) const
+{
+	if (!bCauldronCatastropheActive)
+	{
+		return false;
+	}
+
+	const FVector Center = GetArenaCenter();
+	const float EdgeBuffer = FMath::Max(CauldronCatastropheTuning.RingOutSpillEdgeBuffer, CauldronCatastropheTuning.VialMinimumDropOffDistance);
+	const float SafeHalfSize = FMath::Max(CauldronCatastropheTuning.ArenaHalfSize - EdgeBuffer, 100.0f);
+	return FMath::Abs(Location.X - Center.X) <= SafeHalfSize
+		&& FMath::Abs(Location.Y - Center.Y) <= SafeHalfSize
+		&& Location.Z >= Center.Z - 90.0f;
+}
+
+FVector AWizardStaffGameMode::GetCauldronSpillCenter(const AWizardStaffWizardCharacter* Wizard) const
+{
+	const FVector ArenaCenter = GetArenaCenter();
+	const TWeakObjectPtr<AWizardStaffWizardCharacter> WizardKey(const_cast<AWizardStaffWizardCharacter*>(Wizard));
+	FVector Candidate = CauldronLastSafePositions.Contains(WizardKey)
+		? CauldronLastSafePositions[WizardKey]
+		: (IsValid(Wizard) ? Wizard->GetActorLocation() : ArenaCenter);
+	if (!IsCauldronSafeSpillPosition(Candidate) && IsValid(Wizard))
+	{
+		Candidate = GetSpawnTransformForController(Wizard->GetController()).GetLocation();
+	}
+
+	FVector Direction = Candidate - ArenaCenter;
+	Direction.Z = 0.0f;
+	if (!Direction.Normalize())
+	{
+		Direction = FVector::ForwardVector;
+	}
+
+	const float EdgeBuffer = FMath::Max(CauldronCatastropheTuning.RingOutSpillEdgeBuffer, CauldronCatastropheTuning.VialMinimumDropOffDistance);
+	const float MaxRadius = FMath::Max(CauldronCatastropheTuning.ArenaHalfSize - EdgeBuffer, CauldronCatastropheTuning.VialMinimumCauldronDistance);
+	const float Radius = FMath::Clamp(FVector::Dist2D(Candidate, ArenaCenter), CauldronCatastropheTuning.VialMinimumCauldronDistance, MaxRadius);
+	return ArenaCenter + (Direction * Radius) + FVector(0.0f, 0.0f, 2.0f);
+}
+
+FVector AWizardStaffGameMode::FindCauldronSpillPickupLocation(const FVector& SpillCenter, int32 SpillIndex, int32 SpillCount) const
+{
+	const FVector ArenaCenter = GetArenaCenter();
+	FVector RadialDirection = SpillCenter - ArenaCenter;
+	RadialDirection.Z = 0.0f;
+	if (!RadialDirection.Normalize())
+	{
+		RadialDirection = FVector::ForwardVector;
+	}
+	const FVector Perpendicular(-RadialDirection.Y, RadialDirection.X, 0.0f);
+	const float Spread = FMath::Max(CauldronCatastropheTuning.RingOutSpillRadius, 40.0f);
+	const float CenteredIndex = static_cast<float>(SpillIndex) - ((static_cast<float>(FMath::Max(SpillCount, 1)) - 1.0f) * 0.5f);
+
+	for (int32 Attempt = 0; Attempt < 10; ++Attempt)
+	{
+		const float Ring = Attempt == 0 ? 0.0f : (Spread * (0.55f + (0.18f * Attempt)));
+		const float SideOffset = CenteredIndex * Spread;
+		const FVector Candidate = SpillCenter + (Perpendicular * SideOffset) + (RadialDirection * Ring);
+		if (IsCauldronVialSpawnLocationValid(Candidate))
+		{
+			return Candidate;
+		}
+	}
+
+	return GetCauldronSpillCenter(nullptr);
+}
+
+int32 AWizardStaffGameMode::SpillCauldronVials(AWizardStaffWizardCharacter* Wizard, bool bInterruptBanking)
+{
+	if (!HasAuthority() || !bCauldronCatastropheActive || !IsValid(Wizard) || !Wizard->StaffComponent)
+	{
+		return 0;
+	}
+
+	if (bInterruptBanking && Wizard == CauldronBankingWizard.Get())
+	{
+		EndCauldronBanking(TEXT("Ring-out spill"));
+	}
+
+	TArray<FCauldronVialStackEntry>* Stack = CauldronVialStacks.Find(Wizard);
+	if (!Stack || Stack->IsEmpty())
+	{
+		return 0;
+	}
+
+	const int32 MaximumSpills = FMath::Min(Stack->Num(), FMath::Max(CauldronCatastropheTuning.RingOutVialsSpilled, 0));
+	TArray<EWizardCauldronVialType, TInlineAllocator<2>> SpilledTypes;
+	for (int32 SpillIndex = 0; SpillIndex < MaximumSpills; ++SpillIndex)
+	{
+		const FCauldronVialStackEntry NewestEntry = Stack->Last();
+		if (Wizard->StaffComponent->GetTopStaffSegmentTag() != NewestEntry.SegmentTag)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Cauldron ring-out spill stopped for P%d: top segment %s blocks vial %s."),
+				GetPlayerIndexForWizard(Wizard) + 1,
+				*Wizard->StaffComponent->GetTopStaffSegmentTag().ToString(),
+				*NewestEntry.SegmentTag.ToString());
+			break;
+		}
+
+		if (!Wizard->StaffComponent->RemoveTopStaffSegment(false))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Cauldron ring-out spill stopped for P%d: could not remove vial segment %s."),
+				GetPlayerIndexForWizard(Wizard) + 1,
+				*NewestEntry.SegmentTag.ToString());
+			break;
+		}
+
+		Stack->Pop();
+		SpilledTypes.Add(NewestEntry.Type);
+	}
+
+	if (SpilledTypes.IsEmpty())
+	{
+		return 0;
+	}
+
+	RefreshCauldronVialEffects(Wizard);
+	Wizard->SyncReplicatedStaffSegmentCountFromAuthority();
+	Wizard->RefreshCauldronCurseOrbAttachment();
+
+	const FVector SpillCenter = GetCauldronSpillCenter(Wizard);
+	int32 SpawnedPickupCount = 0;
+	for (int32 SpillIndex = 0; SpillIndex < SpilledTypes.Num(); ++SpillIndex)
+	{
+		const FVector SpawnLocation = FindCauldronSpillPickupLocation(SpillCenter, SpillIndex, SpilledTypes.Num());
+		if (SpawnCauldronVialAtLocation(SpilledTypes[SpillIndex], SpawnLocation, true))
+		{
+			++SpawnedPickupCount;
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Cauldron ring-out spill could not spawn P%d's %s vial pickup."),
+				GetPlayerIndexForWizard(Wizard) + 1,
+				*GetWizardCauldronVialDisplayName(SpilledTypes[SpillIndex]));
+		}
+	}
+
+	const int32 PlayerIndex = GetPlayerIndexForWizard(Wizard);
+	const FString SpillMessage = FString::Printf(TEXT("P%d spilled %d vial%s!"), PlayerIndex + 1, SpilledTypes.Num(), SpilledTypes.Num() == 1 ? TEXT("") : TEXT("s"));
+	PublishReplicatedGameplayEvent(EWizardReplicatedGameplayEventType::CauldronIngredientDeposited, SpillMessage, PlayerIndex, INDEX_NONE, static_cast<float>(SpilledTypes.Num()), false);
+	SyncReplicatedObservableState();
+	return SpawnedPickupCount;
+}
+
+void AWizardStaffGameMode::HandleCauldronRingOutSpill(AWizardStaffWizardCharacter* Wizard)
+{
+	if (!HasAuthority() || !bCauldronCatastropheActive || !IsValid(Wizard))
+	{
+		return;
+	}
+
+	const TWeakObjectPtr<AWizardStaffWizardCharacter> WizardKey(Wizard);
+	if (CauldronProcessedRingOutSpills.Contains(WizardKey))
+	{
+		return;
+	}
+
+	CauldronProcessedRingOutSpills.Add(WizardKey);
+	SpillCauldronVials(Wizard, true);
+}
+
+void AWizardStaffGameMode::ResetCauldronSpillState()
+{
+	CauldronLastSafePositions.Reset();
+	CauldronProcessedRingOutSpills.Reset();
+	CauldronSpilledVialPickups.Reset();
+}
+void AWizardStaffGameMode::ResetCauldronIntakeState()
+{
+	ActiveCauldronIntake = EWizardCauldronIntakeDirection::None;
+	PreviewCauldronIntake = EWizardCauldronIntakeDirection::None;
+	bCauldronIntakeRelocating = false;
+	CauldronIntakeRelocationRemainingTime = 0.0f;
+	ApplyCauldronIntakeReadability();
+}
+
+void AWizardStaffGameMode::SetCauldronActiveIntake(EWizardCauldronIntakeDirection NewIntake)
+{
+	if (!HasAuthority() || !bCauldronCatastropheActive || NewIntake == EWizardCauldronIntakeDirection::None)
+	{
+		return;
+	}
+
+	ActiveCauldronIntake = NewIntake;
+	PreviewCauldronIntake = EWizardCauldronIntakeDirection::None;
+	bCauldronIntakeRelocating = false;
+	CauldronIntakeRelocationRemainingTime = 0.0f;
+	ApplyCauldronIntakeReadability();
+}
+
+void AWizardStaffGameMode::BeginCauldronIntakeRelocation()
+{
+	if (!HasAuthority() || !bCauldronCatastropheActive || bCauldronIntakeRelocating || ActiveCauldronIntake == EWizardCauldronIntakeDirection::None)
+	{
+		return;
+	}
+
+	const EWizardCauldronIntakeDirection NextIntake = ChooseNextCauldronIntake(ActiveCauldronIntake);
+	if (NextIntake == EWizardCauldronIntakeDirection::None)
+	{
+		return;
+	}
+
+	ActiveCauldronIntake = EWizardCauldronIntakeDirection::None;
+	PreviewCauldronIntake = NextIntake;
+	bCauldronIntakeRelocating = true;
+	CauldronIntakeRelocationRemainingTime = FMath::Max(CauldronCatastropheTuning.ActiveIntakeChangeWarningDuration, 0.0f);
+	ApplyCauldronIntakeReadability();
+
+	if (CauldronIntakeRelocationRemainingTime <= KINDA_SMALL_NUMBER)
+	{
+		UpdateCauldronIntakeRelocation(0.0f);
+	}
+}
+
+void AWizardStaffGameMode::UpdateCauldronIntakeRelocation(float DeltaSeconds)
+{
+	if (!HasAuthority() || !bCauldronCatastropheActive || !bCauldronIntakeRelocating)
+	{
+		return;
+	}
+
+	CauldronIntakeRelocationRemainingTime = FMath::Max(CauldronIntakeRelocationRemainingTime - FMath::Max(DeltaSeconds, 0.0f), 0.0f);
+	if (CauldronIntakeRelocationRemainingTime > 0.0f)
+	{
+		return;
+	}
+
+	const EWizardCauldronIntakeDirection NewActiveIntake = PreviewCauldronIntake != EWizardCauldronIntakeDirection::None
+		? PreviewCauldronIntake
+		: ChooseNextCauldronIntake(EWizardCauldronIntakeDirection::None);
+	ActiveCauldronIntake = NewActiveIntake;
+	PreviewCauldronIntake = EWizardCauldronIntakeDirection::None;
+	bCauldronIntakeRelocating = false;
+	ApplyCauldronIntakeReadability();
+}
+
+void AWizardStaffGameMode::ApplyCauldronIntakeReadability()
+{
+	if (!IsValid(ActiveCauldronArena))
+	{
+		return;
+	}
+
+	ActiveCauldronArena->ConfigureIntakePresentation(
+		CauldronCatastropheTuning.ActiveIntakeDistanceFromCauldronCenter,
+		CauldronCatastropheTuning.ActiveIntakeVisualScale,
+		CauldronCatastropheTuning.ActiveIntakePulseSpeed);
+	ActiveCauldronArena->SetIntakeState(ActiveCauldronIntake, PreviewCauldronIntake, bCauldronIntakeRelocating);
+}
+
+EWizardCauldronIntakeDirection AWizardStaffGameMode::ChooseNextCauldronIntake(EWizardCauldronIntakeDirection ExcludedIntake) const
+{
+	static const EWizardCauldronIntakeDirection IntakeDirections[] = {
+		EWizardCauldronIntakeDirection::North,
+		EWizardCauldronIntakeDirection::East,
+		EWizardCauldronIntakeDirection::South,
+		EWizardCauldronIntakeDirection::West
+	};
+
+	TArray<EWizardCauldronIntakeDirection, TInlineAllocator<4>> Candidates;
+	for (const EWizardCauldronIntakeDirection IntakeDirection : IntakeDirections)
+	{
+		if (IntakeDirection != ExcludedIntake)
+		{
+			Candidates.Add(IntakeDirection);
+		}
+	}
+	return Candidates.IsEmpty() ? EWizardCauldronIntakeDirection::None : Candidates[FMath::RandRange(0, Candidates.Num() - 1)];
+}
+
+EWizardCauldronIntakeDirection AWizardStaffGameMode::ParseCauldronIntakeDirection(const FString& IntakeDirection) const
+{
+	if (IntakeDirection.Equals(TEXT("North"), ESearchCase::IgnoreCase))
+	{
+		return EWizardCauldronIntakeDirection::North;
+	}
+	if (IntakeDirection.Equals(TEXT("East"), ESearchCase::IgnoreCase))
+	{
+		return EWizardCauldronIntakeDirection::East;
+	}
+	if (IntakeDirection.Equals(TEXT("South"), ESearchCase::IgnoreCase))
+	{
+		return EWizardCauldronIntakeDirection::South;
+	}
+	if (IntakeDirection.Equals(TEXT("West"), ESearchCase::IgnoreCase))
+	{
+		return EWizardCauldronIntakeDirection::West;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("Unknown Cauldron intake '%s'. Use North, East, South, or West."), *IntakeDirection);
+	return EWizardCauldronIntakeDirection::None;
+}
+
+void AWizardStaffGameMode::RefreshCauldronVialEffects(AWizardStaffWizardCharacter* Wizard)
+{
+	if (!IsValid(Wizard))
+	{
+		return;
+	}
+	const TArray<FCauldronVialStackEntry>* Stack = CauldronVialStacks.Find(Wizard);
+	const int32 Count = Stack ? Stack->Num() : 0;
+	const EWizardCauldronVialType ActiveType = Count > 0 ? Stack->Last().Type : EWizardCauldronVialType::None;
+	float SpeedMultiplier = 1.0f;
+	float AccelerationMultiplier = 1.0f;
+	float BonkMultiplier = 1.0f;
+	if (ActiveType == EWizardCauldronVialType::Speed)
+	{
+		SpeedMultiplier = CauldronCatastropheTuning.SpeedVialMovementMultiplier;
+		AccelerationMultiplier = CauldronCatastropheTuning.SpeedVialAccelerationMultiplier;
+	}
+	else if (ActiveType == EWizardCauldronVialType::BurdeningPower)
+	{
+		SpeedMultiplier = CauldronCatastropheTuning.BurdeningPowerMovementMultiplier;
+		BonkMultiplier = CauldronCatastropheTuning.BurdeningPowerBonkMultiplier;
+	}
+	Wizard->SetCauldronVialEffectState(ActiveType, Count, SpeedMultiplier, AccelerationMultiplier, BonkMultiplier, GetCauldronVialInstabilityMultiplier(Wizard));
+}
+
+float AWizardStaffGameMode::GetCauldronVialInstabilityMultiplier(const AWizardStaffWizardCharacter* Wizard) const
+{
+	if (!bCauldronCatastropheActive || !CauldronCatastropheTuning.bEnableVialInstability || !IsValid(Wizard))
+	{
+		return 1.0f;
+	}
+
+	const TArray<FCauldronVialStackEntry>* Stack = CauldronVialStacks.Find(Wizard);
+	const int32 CarriedVialCount = Stack ? Stack->Num() : 0;
+	const int32 ExtraVials = FMath::Max(CarriedVialCount - FMath::Max(CauldronCatastropheTuning.VialInstabilitySafeCount, 0), 0);
+	const float MaximumMultiplier = FMath::Max(CauldronCatastropheTuning.VialInstabilityMaximumMultiplier, 1.0f);
+	return FMath::Clamp(1.0f + (static_cast<float>(ExtraVials) * FMath::Max(CauldronCatastropheTuning.VialInstabilityStressPerExtraVial, 0.0f)), 1.0f, MaximumMultiplier);
+}
+
+bool AWizardStaffGameMode::ApplyCauldronVialInstabilityForEnemyBonk(AWizardStaffWizardCharacter* Attacker, AWizardStaffWizardCharacter* Target)
+{
+	if (!HasAuthority() || !bCauldronCatastropheActive || !IsValid(Attacker) || !IsValid(Target) || Attacker == Target
+		|| GetPlayerIndexForWizard(Attacker) == INDEX_NONE || GetPlayerIndexForWizard(Target) == INDEX_NONE)
+	{
+		return false;
+	}
+
+	const float Multiplier = GetCauldronVialInstabilityMultiplier(Target);
+	if (Multiplier <= 1.0f)
+	{
+		return false;
+	}
+
+	int32 BonkSequence = Attacker->GetAuthoritativeQuickBonkSequence();
+	if (BonkSequence <= 0)
+	{
+		// A Staff Clash winner may not be the wizard that started the original swing.
+		BonkSequence = NextCauldronInstabilityFallbackSequence--;
+	}
+
+	const int64 BonkKey = (static_cast<int64>(Attacker->GetUniqueID()) << 32) | static_cast<uint32>(BonkSequence);
+	const TWeakObjectPtr<AWizardStaffWizardCharacter> TargetKey(Target);
+	if (const int64* LastBonkKey = LastCauldronInstabilityBonkKeys.Find(TargetKey); LastBonkKey && *LastBonkKey == BonkKey)
+	{
+		return false;
+	}
+
+	float BaseStress = 0.0f;
+	float FinalStress = 0.0f;
+	if (!Target->ApplyCauldronVialInstabilityStress(Multiplier, BaseStress, FinalStress))
+	{
+		return false;
+	}
+
+	LastCauldronInstabilityBonkKeys.Add(TargetKey, BonkKey);
+	UE_LOG(LogTemp, Log, TEXT("Cauldron instability P%d -> P%d: base %.2f x %.2f = final %.2f (bonk %d)."),
+		GetPlayerIndexForWizard(Attacker) + 1, GetPlayerIndexForWizard(Target) + 1, BaseStress, Multiplier, FinalStress, BonkSequence);
+	return true;
+}
+
+void AWizardStaffGameMode::ClearCauldronVials(bool bRemoveSegments)
+{
+	for (AWizardStaffCauldronVialPickup* Vial : SpawnedCauldronVials)
+	{
+		if (IsValid(Vial))
+		{
+			Vial->Destroy();
+		}
+	}
+	SpawnedCauldronVials.Reset();
+	PendingCauldronVialRespawns.Reset();
+	LastCauldronDepositBonkSequences.Reset();
+	LastCauldronInstabilityBonkKeys.Reset();
+	NextCauldronInstabilityFallbackSequence = -1;
+	NextDebugCauldronDepositSequence = -1;
+
+	for (TPair<TWeakObjectPtr<AWizardStaffWizardCharacter>, TArray<FCauldronVialStackEntry>>& Pair : CauldronVialStacks)
+	{
+		AWizardStaffWizardCharacter* Wizard = Pair.Key.Get();
+		if (bRemoveSegments && IsValid(Wizard) && Wizard->StaffComponent)
+		{
+			for (int32 EntryIndex = Pair.Value.Num() - 1; EntryIndex >= 0; --EntryIndex)
+			{
+				if (Wizard->StaffComponent->GetTopStaffSegmentTag() != Pair.Value[EntryIndex].SegmentTag)
+				{
+					UE_LOG(LogTemp, Warning, TEXT("Cauldron vial cleanup left a non-top tagged segment intact."));
+					break;
+				}
+				Wizard->StaffComponent->RemoveTopStaffSegment(false);
+			}
+			Wizard->SyncReplicatedStaffSegmentCountFromAuthority();
+		}
+		if (IsValid(Wizard))
+		{
+			Wizard->SetCauldronVialEffectState(EWizardCauldronVialType::None, 0, 1.0f, 1.0f, 1.0f);
+		}
+	}
+	CauldronVialStacks.Reset();
+	for (AWizardStaffWizardCharacter* Wizard : GetCurrentWizards())
+	{
+		if (IsValid(Wizard))
+		{
+			Wizard->SetCauldronVialEffectState(EWizardCauldronVialType::None, 0, 1.0f, 1.0f, 1.0f);
+		}
+	}
+	NextCauldronVialPickupOrder = 1;
+}
+
+void AWizardStaffGameMode::SpawnCauldronHazard(EWizardCauldronHazardType HazardType)
+{
+	if (!HasAuthority() || !bCauldronCatastropheActive || SpawnedCauldronHazards.Num() >= FMath::Max(CauldronCatastropheTuning.MaximumActiveHazards, 1))
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	const float Angle = FMath::FRandRange(0.0f, 2.0f * UE_PI);
+	const float MaximumRadius = FMath::Min(
+		FMath::Max(CauldronCatastropheTuning.IngredientSpawnRadius - 120.0f, 420.0f),
+		FMath::Max(CauldronCatastropheTuning.ArenaHalfSize - 240.0f, 420.0f));
+	const float Radius = FMath::FRandRange(360.0f, MaximumRadius);
+	const FVector SpawnLocation = GetArenaCenter() + FVector(FMath::Cos(Angle), FMath::Sin(Angle), 0.0f) * Radius + FVector(0.0f, 0.0f, -4.0f);
+	FActorSpawnParameters SpawnParameters;
+	SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	AWizardStaffCauldronHazard* Hazard = World->SpawnActor<AWizardStaffCauldronHazard>(AWizardStaffCauldronHazard::StaticClass(), SpawnLocation, FRotator::ZeroRotator, SpawnParameters);
+	if (Hazard)
+	{
+		Hazard->InitializeHazard(HazardType, CauldronCatastropheTuning.HazardRadius, IsValid(ActiveCauldronArena) ? ActiveCauldronArena->GetAcceptanceCenter() : GetArenaCenter());
+		SpawnedCauldronHazards.Add(Hazard);
+		CauldronHazardExpirationTimes.Add(TWeakObjectPtr<AWizardStaffCauldronHazard>(Hazard), World->GetTimeSeconds() + FMath::Max(CauldronCatastropheTuning.HazardLifetime, 1.0f));
+	}
+}
+
+void AWizardStaffGameMode::UpdateCauldronHazardEffects()
+{
+	for (AWizardStaffWizardCharacter* Wizard : GetCurrentWizards())
+	{
+		if (!Wizard)
+		{
+			continue;
+		}
+
+		float FrictionMultiplier = 1.0f;
+		float BrakingMultiplier = 1.0f;
+		float SpeedMultiplier = 1.0f;
+		float AccelerationMultiplier = 1.0f;
+		float TurningMultiplier = 1.0f;
+		bool bOnSlipperyHazard = false;
+		AWizardStaffCauldronHazard* StickyHazard = nullptr;
+		for (AWizardStaffCauldronHazard* Hazard : SpawnedCauldronHazards)
+		{
+			if (!IsValid(Hazard) || FVector::DistSquared2D(Wizard->GetActorLocation(), Hazard->GetActorLocation()) > FMath::Square(Hazard->GetHazardRadius()))
+			{
+				continue;
+			}
+			if (Hazard->GetHazardType() == EWizardCauldronHazardType::Slippery)
+			{
+				FrictionMultiplier = FMath::Min(FrictionMultiplier, CauldronCatastropheTuning.SlipperyFrictionMultiplier);
+				BrakingMultiplier = FMath::Min(BrakingMultiplier, CauldronCatastropheTuning.SlipperyBrakingMultiplier);
+				bOnSlipperyHazard = true;
+			}
+			else
+			{
+				SpeedMultiplier = FMath::Min(SpeedMultiplier, CauldronCatastropheTuning.StickyMovementMultiplier);
+				AccelerationMultiplier = FMath::Min(AccelerationMultiplier, CauldronCatastropheTuning.StickyAccelerationMultiplier);
+				TurningMultiplier = FMath::Min(TurningMultiplier, CauldronCatastropheTuning.StickyTurningMultiplier);
+				StickyHazard = Hazard;
+			}
+		}
+		const float DeltaSeconds = GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.0f;
+		if (bOnSlipperyHazard)
+		{
+			Wizard->TriggerCauldronSlipperySkid(
+				Wizard->GetManaSloshAlpha(),
+				CauldronCatastropheTuning.SlipperySkidDuration,
+				CauldronCatastropheTuning.SlipperySkidMinimumImpulse,
+				CauldronCatastropheTuning.SlipperySkidMaximumImpulse);
+		}
+
+		const bool bSlipperySkidding = Wizard->UpdateCauldronSlipperySkid(DeltaSeconds);
+		if (bSlipperySkidding)
+		{
+			FrictionMultiplier = FMath::Min(FrictionMultiplier, CauldronCatastropheTuning.SlipperyFrictionMultiplier);
+			BrakingMultiplier = FMath::Min(BrakingMultiplier, CauldronCatastropheTuning.SlipperyBrakingMultiplier);
+			Wizard->ApplyCauldronSlipperyGlide(DeltaSeconds, CauldronCatastropheTuning.SlipperySkidAcceleration);
+		}
+		Wizard->SetCauldronHazardMovementMultipliers(FrictionMultiplier, BrakingMultiplier, SpeedMultiplier, AccelerationMultiplier, TurningMultiplier);
+
+		if (StickyHazard && !Wizard->IsBroomBoostActive())
+		{
+			Wizard->SetCauldronStickyTetherState(true, StickyHazard->GetActorLocation());
+		}
+		else if (Wizard->IsCauldronStickyTethered())
+		{
+			bool bAnchorStillExists = false;
+			for (AWizardStaffCauldronHazard* Hazard : SpawnedCauldronHazards)
+			{
+				if (IsValid(Hazard) && Hazard->GetHazardType() == EWizardCauldronHazardType::Sticky
+					&& FVector::DistSquared2D(Hazard->GetActorLocation(), Wizard->GetCauldronStickyTetherAnchor()) <= 1.0f)
+				{
+					bAnchorStillExists = true;
+					break;
+				}
+			}
+			if (!bAnchorStillExists)
+			{
+				Wizard->SetCauldronStickyTetherState(false);
+			}
+		}
+
+		if (Wizard->IsCauldronStickyTethered() && !Wizard->IsBroomBoostActive())
+		{
+			Wizard->ApplyCauldronStickyTetherReel(GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.0f);
+		}
+	}
+}
+
+void AWizardStaffGameMode::AssignCauldronCurse(int32 ForcedPlayerIndex)
+{
+	if (!HasAuthority() || !bCauldronCatastropheActive)
+	{
+		return;
+	}
+
+	TArray<int32> Candidates;
+	for (AWizardStaffWizardCharacter* Wizard : GetCurrentWizards())
+	{
+		const int32 PlayerIndex = GetPlayerIndexForWizard(Wizard);
+		if (Wizard && PlayerIndex != INDEX_NONE && !Wizard->IsReadableOutOfArenaRespawning()
+			&& (CauldronCatastropheTuning.bAllowSameWizardConsecutiveCurse || PlayerIndex != LastCauldronCursedPlayerIndex))
+		{
+			Candidates.Add(PlayerIndex);
+		}
+	}
+	if (ForcedPlayerIndex != INDEX_NONE && IsValid(GetWizardForPlayerIndex(ForcedPlayerIndex)))
+	{
+		Candidates.Reset();
+		Candidates.Add(ForcedPlayerIndex);
+	}
+	if (Candidates.Num() == 0)
+	{
+		CauldronNextCurseTime = 1.0f;
+		return;
+	}
+
+	ClearCauldronCurse(false);
+	CauldronCursedPlayerIndex = Candidates[FMath::RandRange(0, Candidates.Num() - 1)];
+	LastCauldronCursedPlayerIndex = CauldronCursedPlayerIndex;
+	CauldronCurseRemainingTime = FMath::Max(CauldronCatastropheTuning.CurseDuration, 0.1f);
+	for (AWizardStaffWizardCharacter* Wizard : GetCurrentWizards())
+	{
+		if (Wizard)
+		{
+			Wizard->SetCauldronCurseVisualRelativeLocation(CauldronCatastropheTuning.CurseOrbStaffRelativeLocation);
+			Wizard->SetCauldronCurseState(GetPlayerIndexForWizard(Wizard) == CauldronCursedPlayerIndex, CauldronCurseRemainingTime);
+		}
+	}
+	PublishReplicatedGameplayEvent(EWizardReplicatedGameplayEventType::CauldronCurse, FString::Printf(TEXT("P%d is cursed: pass it!"), CauldronCursedPlayerIndex + 1), CauldronCursedPlayerIndex, INDEX_NONE, CauldronCurseRemainingTime, false);
+	SyncReplicatedObservableState();
+}
+
+void AWizardStaffGameMode::ClearCauldronCurse(bool bScheduleNext)
+{
+	CauldronCursedPlayerIndex = INDEX_NONE;
+	CauldronCurseRemainingTime = 0.0f;
+	bCauldronCurseGrounded = false;
+	CauldronGroundCurseSegment.Reset();
+	CauldronGroundCurseLastLocation = FVector::ZeroVector;
+	for (AWizardStaffWizardCharacter* Wizard : GetCurrentWizards())
+	{
+		if (Wizard)
+		{
+			Wizard->ClearCauldronCurseOrbLooseSegmentAttachment();
+			Wizard->SetCauldronCurseState(false, 0.0f);
+		}
+	}
+	CauldronNextCurseTime = bScheduleNext ? FMath::Max(CauldronCatastropheTuning.CurseCadence, 1.0f) : 0.0f;
+}
+
+void AWizardStaffGameMode::ExplodeCauldronCurse()
+{
+	const int32 ExplodingPlayerIndex = CauldronCursedPlayerIndex;
+	AWizardStaffWizardCharacter* Holder = GetWizardForPlayerIndex(ExplodingPlayerIndex);
+	if (!HasAuthority() || !IsValid(Holder))
+	{
+		ClearCauldronCurse(true);
+		return;
+	}
+
+	static const FVector CardinalDirections[] = {
+		FVector::ForwardVector,
+		-FVector::ForwardVector,
+		FVector::RightVector,
+		-FVector::RightVector
+	};
+	const FVector KnockbackDirection = CardinalDirections[FMath::RandRange(0, UE_ARRAY_COUNT(CardinalDirections) - 1)];
+	Holder->CancelStaffClashStateForReset();
+	Holder->ApplyBonkReaction(KnockbackDirection, CauldronCatastropheTuning.ExplosionHorizontalKnockback, CauldronCatastropheTuning.ExplosionVerticalKnockback, 0);
+	PublishReplicatedGameplayEvent(EWizardReplicatedGameplayEventType::CauldronCurse, FString::Printf(TEXT("P%d's curse exploded"), ExplodingPlayerIndex + 1), ExplodingPlayerIndex, INDEX_NONE, 0.0f, false);
+	ClearCauldronCurse(true);
+}
+
+void AWizardStaffGameMode::ExplodeGroundedCauldronCurse()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	const FVector ExplosionLocation = CauldronGroundCurseLastLocation;
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		ClearCauldronCurse(true);
+		return;
+	}
+
+	const float Radius = FMath::Max(CauldronCatastropheTuning.GroundCurseExplosionRadius, 0.0f);
+	TArray<FOverlapResult> Overlaps;
+	FCollisionObjectQueryParams ObjectParams;
+	ObjectParams.AddObjectTypesToQuery(ECC_Pawn);
+	World->OverlapMultiByObjectType(Overlaps, ExplosionLocation, FQuat::Identity, ObjectParams, FCollisionShape::MakeSphere(Radius));
+	int32 AffectedWizardCount = 0;
+	for (const FOverlapResult& Overlap : Overlaps)
+	{
+		AWizardStaffWizardCharacter* Wizard = Cast<AWizardStaffWizardCharacter>(Overlap.GetActor());
+		if (!IsValid(Wizard))
+		{
+			continue;
+		}
+
+		FVector KnockbackDirection = Wizard->GetActorLocation() - ExplosionLocation;
+		KnockbackDirection.Z = 0.0f;
+		if (!KnockbackDirection.Normalize())
+		{
+			KnockbackDirection = FVector::ForwardVector;
+		}
+		Wizard->ApplyBonkReaction(KnockbackDirection, CauldronCatastropheTuning.GroundCurseExplosionKnockback, CauldronCatastropheTuning.GroundCurseExplosionUpwardBoost, 0);
+		++AffectedWizardCount;
+	}
+
+	PublishReplicatedGameplayEvent(EWizardReplicatedGameplayEventType::CauldronCurse, FString::Printf(TEXT("Cursed segment exploded near %d wizard%s"), AffectedWizardCount, AffectedWizardCount == 1 ? TEXT("") : TEXT("s")), INDEX_NONE, INDEX_NONE, static_cast<float>(AffectedWizardCount), false);
+	ClearCauldronCurse(true);
+}
+
+void AWizardStaffGameMode::SetPrototypeArenaPhasePresentationActive(bool bActive)
+{
+	if (!ActivePrototypeArena)
+	{
+		return;
+	}
+
+	ActivePrototypeArena->SetPhasePresentationActive(bActive);
+}
+
+void AWizardStaffGameMode::AddCauldronScore(int32 PlayerIndex, int32 Amount, const FString& Reason)
+{
+	if (!HasAuthority() || !bCauldronCatastropheActive || PlayerIndex == INDEX_NONE || Amount <= 0)
+	{
+		return;
+	}
+	EnsureCauldronScoreSize(PlayerIndex + 1);
+	if (!CauldronScores.IsValidIndex(PlayerIndex))
+	{
+		return;
+	}
+	CauldronScores[PlayerIndex] += Amount;
+	PublishReplicatedGameplayEvent(
+		EWizardReplicatedGameplayEventType::CauldronIngredientDeposited,
+		FString::Printf(TEXT("P%d deposited %d vial%s"), PlayerIndex + 1, Amount, Amount == 1 ? TEXT("") : TEXT("s")),
+		PlayerIndex,
+		INDEX_NONE,
+		static_cast<float>(CauldronScores[PlayerIndex]),
+		false);
+	UE_LOG(LogTemp, Log, TEXT("Cauldron Catastrophe: P%d +%d (%s), score %d."), PlayerIndex + 1, Amount, *Reason, CauldronScores[PlayerIndex]);
+	SyncAllReplicatedPlayerStates();
+}
+
+void AWizardStaffGameMode::GrantCauldronStaffSegments(int32 PlayerIndex, int32 SegmentCount, const FString& Reason)
+{
+	if (!HasAuthority() || !bCauldronCatastropheActive || PlayerIndex == INDEX_NONE || SegmentCount <= 0)
+	{
+		return;
+	}
+
+	AWizardStaffWizardCharacter* Wizard = GetWizardForPlayerIndex(PlayerIndex);
+	if (!Wizard || !Wizard->StaffComponent)
+	{
+		return;
+	}
+
+	int32 GrantedSegments = 0;
+	for (int32 SegmentIndex = 0; SegmentIndex < SegmentCount; ++SegmentIndex)
+	{
+		const int32 PreviousCount = Wizard->StaffComponent->GetSegmentCount();
+		if (Wizard->StaffComponent->AddStaffSegment() <= PreviousCount)
+		{
+			break;
+		}
+		++GrantedSegments;
+	}
+
+	if (GrantedSegments > 0)
+	{
+		Wizard->AddManaSloshForStaffGrowth(GrantedSegments, FName(*Reason));
+		SyncReplicatedPlayerStateForIndex(PlayerIndex);
+	}
+}
+
+void AWizardStaffGameMode::AnnounceCauldronWinner()
+{
+	TArray<int32> Winners;
+	int32 BestScore = MIN_int32;
+	EnsureCauldronScoreSize();
+	for (int32 PlayerIndex = 0; PlayerIndex < CauldronScores.Num(); ++PlayerIndex)
+	{
+		if (!IsValid(GetWizardForPlayerIndex(PlayerIndex)))
+		{
+			continue;
+		}
+		const int32 Score = CauldronScores[PlayerIndex];
+		if (Score > BestScore)
+		{
+			BestScore = Score;
+			Winners.Reset();
+			Winners.Add(PlayerIndex);
+		}
+		else if (Score == BestScore)
+		{
+			Winners.Add(PlayerIndex);
+		}
+	}
+
+	if (Winners.Num() == 0)
+	{
+		MugRunWinnerMessage = TEXT("Cauldron Catastrophe ended: no winner.");
+	}
+	else if (Winners.Num() == 1)
+	{
+		MugRunWinnerMessage = FString::Printf(TEXT("Cauldron Catastrophe Winner: P%d with %d banked vials!"), Winners[0] + 1, BestScore);
+	}
+	else
+	{
+		MugRunWinnerMessage = FString::Printf(TEXT("Cauldron Catastrophe Tie at %d:"), BestScore);
+		for (const int32 PlayerIndex : Winners)
+		{
+			MugRunWinnerMessage += FString::Printf(TEXT(" P%d"), PlayerIndex + 1);
+		}
+	}
+
+	for (const int32 PlayerIndex : Winners)
+	{
+		EnsurePlayerRoundWinsSize(PlayerIndex + 1);
+		if (PlayerRoundWins.IsValidIndex(PlayerIndex))
+		{
+			++PlayerRoundWins[PlayerIndex];
+		}
+		const bool bTie = Winners.Num() > 1;
+		AddGrandWizardFavor(PlayerIndex, bTie ? GrandWizardFavorTuning.TiedTrialWinnerFavor : GrandWizardFavorTuning.CauldronCatastropheWinnerFavor, bTie ? TEXT("Cauldron Catastrophe Tie") : TEXT("Cauldron Catastrophe Winner"));
+	}
+	SyncPlaytestTelemetryRoundWins();
+	SyncAllReplicatedPlayerStates();
+	AWizardStaffHUD::PushGameplayMessage(this, MugRunWinnerMessage, FColor::Yellow, 4.0f, EWizardHudMessageCategory::Scoring);
+}
+
+void AWizardStaffGameMode::EnsureCauldronScoreSize(int32 MinimumPlayerCount)
+{
+	int32 DesiredSize = FMath::Max(MinimumPlayerCount, GetDesiredLocalPlayerCountForSession());
+	for (const AWizardStaffWizardCharacter* Wizard : GetCurrentWizards())
+	{
+		const int32 PlayerIndex = GetPlayerIndexForWizard(Wizard);
+		if (PlayerIndex != INDEX_NONE)
+		{
+			DesiredSize = FMath::Max(DesiredSize, PlayerIndex + 1);
+		}
+	}
+	const int32 OldSize = CauldronScores.Num();
+	CauldronScores.SetNum(FMath::Max(DesiredSize, OldSize));
+	for (int32 PlayerIndex = OldSize; PlayerIndex < CauldronScores.Num(); ++PlayerIndex)
+	{
+		CauldronScores[PlayerIndex] = 0;
+	}
+}
+
 void AWizardStaffGameMode::RestartMugRunMatch()
 {
 	if (!MugRunTuning.bEnableMugRun)
@@ -961,6 +3518,7 @@ void AWizardStaffGameMode::RestartMugRunMatch()
 
 void AWizardStaffGameMode::FinishActiveTrialResults()
 {
+	const bool bFinishedCauldronCatastrophe = ActiveTrialType == EWizardTrialType::CauldronCatastrophe;
 	TrialResultsRemainingTime = 0.0f;
 	MugRunPostMatchRemainingTime = 0.0f;
 	IntermissionRemainingTime = 0.0f;
@@ -968,11 +3526,10 @@ void AWizardStaffGameMode::FinishActiveTrialResults()
 	MugRunMatchState = EWizardMugRunMatchState::WaitingToStart;
 	bStaffsAtDawnTrialActive = false;
 	++CompletedTrialCount;
-
-	if (CompletedTrialCount >= FMath::Max(PartyMatchTuning.TrialsBeforeFinalRound, 1))
+	if (bFinishedCauldronCatastrophe)
 	{
-		EnterGrandWizardFinalRound();
-		return;
+		CauldronScores.Reset();
+		SyncAllReplicatedPlayerStates();
 	}
 
 	EnterPartyHallIntermission();
@@ -980,6 +3537,11 @@ void AWizardStaffGameMode::FinishActiveTrialResults()
 
 void AWizardStaffGameMode::EnterGrandWizardFinalRound()
 {
+	// The Final reuses the prototype arena hidden during Party Hall. Restore its floor first,
+	// then retire the retained Cauldron arena before spawning Final presentation and players.
+	SetPrototypeArenaPhasePresentationActive(true);
+	CleanupCauldronCatastrophe();
+	CauldronScores.Reset();
 	PartyMatchState = EWizardPartyMatchState::FinalRound;
 	ActiveTrialState = EWizardTrialState::Active;
 	bWizardsStagedForActiveTrial = false;
@@ -1135,6 +3697,7 @@ void AWizardStaffGameMode::FinishGrandWizardFinalRound()
 	GrandWizardStealHoldTime = 0.0f;
 	GrandWizardStartBonusRemainingTime = 0.0f;
 	CaptureFinalPlaytestTelemetrySnapshot();
+	DispatchAuthoritativeSteamMatchResults();
 	UpdateLeaderHighlights();
 
 	UE_LOG(LogTemp, Warning, TEXT("%s"), *GrandWizardWinnerMessage);
@@ -1154,6 +3717,55 @@ void AWizardStaffGameMode::FinishGrandWizardFinalRound()
 	{
 		LogPlaytestTelemetrySummary();
 	}
+}
+
+void AWizardStaffGameMode::DispatchAuthoritativeSteamMatchResults()
+{
+	if (!HasAuthority() || PrototypeSessionMode != EWizardPrototypeSessionMode::OnlineListenServer)
+	{
+		return;
+	}
+
+	AWizardStaffGameState* WizardGameState = GetGameState<AWizardStaffGameState>();
+	if (!WizardGameState)
+	{
+		return;
+	}
+
+	const int32 MatchGeneration = WizardGameState->GetReplicatedMatchSessionGeneration();
+	if (MatchGeneration <= 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("WizardStaff Steam result dispatch skipped: invalid match generation %d."), MatchGeneration);
+		return;
+	}
+
+	int32 DispatchedPlayerCount = 0;
+	for (APlayerState* BasePlayerState : WizardGameState->PlayerArray)
+	{
+		AWizardStaffPlayerState* WizardPlayerState = Cast<AWizardStaffPlayerState>(BasePlayerState);
+		if (!WizardPlayerState || WizardPlayerState->IsPlaytestBotSlot())
+		{
+			continue;
+		}
+
+		const int32 PlayerSlot = WizardPlayerState->GetWizardDisplaySlot();
+		if (PlayerSlot < 0)
+		{
+			continue;
+		}
+
+		WizardPlayerState->SendAuthoritativeSteamMatchResultToOwner(
+			MatchGeneration,
+			PlayerSlot,
+			GrandWizardWinnerPlayerIndex,
+			GetPlayerGrandWizardFavor(PlayerSlot),
+			GetPlayerRoundWins(PlayerSlot));
+		++DispatchedPlayerCount;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("WizardStaff dispatched authoritative Steam match result generation %d to %d online player owner(s)."),
+		MatchGeneration,
+		DispatchedPlayerCount);
 }
 
 void AWizardStaffGameMode::ResetGrandWizardFinalRoundState()
@@ -2273,6 +4885,15 @@ int32 AWizardStaffGameMode::GetPlayerIndexForWizard(const AWizardStaffWizardChar
 		return INDEX_NONE;
 	}
 
+	if (const AWizardStaffPlayerState* WizardPlayerState = Wizard->GetPlayerState<AWizardStaffPlayerState>())
+	{
+		const int32 AssignedSlot = WizardPlayerState->GetWizardDisplaySlot();
+		if (AssignedSlot >= 0)
+		{
+			return AssignedSlot;
+		}
+	}
+
 	const UWorld* World = GetWorld();
 	if (World)
 	{
@@ -2289,7 +4910,7 @@ int32 AWizardStaffGameMode::GetPlayerIndexForWizard(const AWizardStaffWizardChar
 	}
 
 	const APlayerState* PlayerState = Wizard->GetPlayerState();
-	return PlayerState ? FMath::Max(PlayerState->GetPlayerId(), 0) : INDEX_NONE;
+	return PlayerState && PlayerState->GetPlayerId() >= 0 ? PlayerState->GetPlayerId() : INDEX_NONE;
 }
 
 AWizardStaffGameState* AWizardStaffGameMode::GetWizardStaffGameState() const
@@ -2310,25 +4931,46 @@ AWizardStaffPlayerState* AWizardStaffGameMode::GetWizardStaffPlayerStateForIndex
 		return nullptr;
 	}
 
-	int32 ControllerIndex = 0;
-	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+	if (const AWizardStaffGameState* WizardGameState = GetWizardStaffGameState())
 	{
-		const APlayerController* PlayerController = It->Get();
-		if (PlayerController && ControllerIndex == PlayerIndex)
+		for (APlayerState* BasePlayerState : WizardGameState->PlayerArray)
 		{
-			return Cast<AWizardStaffPlayerState>(PlayerController->PlayerState);
+			AWizardStaffPlayerState* WizardPlayerState = Cast<AWizardStaffPlayerState>(BasePlayerState);
+			if (WizardPlayerState && WizardPlayerState->GetWizardDisplaySlot() == PlayerIndex)
+			{
+				return WizardPlayerState;
+			}
 		}
-		++ControllerIndex;
 	}
 
 	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
 	{
 		const APlayerController* PlayerController = It->Get();
 		const APlayerState* PlayerState = PlayerController ? PlayerController->PlayerState : nullptr;
-		if (PlayerState && FMath::Max(PlayerState->GetPlayerId(), 0) == PlayerIndex)
+		const AWizardStaffPlayerState* WizardPlayerState = Cast<AWizardStaffPlayerState>(PlayerState);
+		if (WizardPlayerState && WizardPlayerState->GetWizardDisplaySlot() >= 0)
+		{
+			continue;
+		}
+		if (PlayerState && PlayerState->GetPlayerId() >= 0 && PlayerState->GetPlayerId() == PlayerIndex)
 		{
 			return Cast<AWizardStaffPlayerState>(PlayerController->PlayerState);
 		}
+	}
+
+	int32 ControllerIndex = 0;
+	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+	{
+		const APlayerController* PlayerController = It->Get();
+		const AWizardStaffPlayerState* WizardPlayerState = PlayerController
+			? Cast<AWizardStaffPlayerState>(PlayerController->PlayerState)
+			: nullptr;
+		const bool bHasAssignedSlot = WizardPlayerState && WizardPlayerState->GetWizardDisplaySlot() >= 0;
+		if (PlayerController && !bHasAssignedSlot && ControllerIndex == PlayerIndex)
+		{
+			return Cast<AWizardStaffPlayerState>(PlayerController->PlayerState);
+		}
+		++ControllerIndex;
 	}
 
 	return nullptr;
@@ -2361,6 +5003,13 @@ void AWizardStaffGameMode::SyncReplicatedObservableState()
 			TrialResultsRemainingTime,
 			IntermissionRemainingTime,
 			FinalRoundRemainingTime);
+		WizardGameState->SetCauldronMirror(
+			CauldronRemainingTime,
+			CauldronCursedPlayerIndex,
+			CauldronCurseRemainingTime,
+			GetCauldronBankingPlayerIndex(),
+			CauldronBankingTransferredCount,
+			GetCauldronBankingProgressAlpha());
 	}
 
 	SyncAllReplicatedPlayerStates();
@@ -2420,19 +5069,23 @@ void AWizardStaffGameMode::SyncReplicatedPlayerStateForIndex(int32 PlayerIndex)
 	const AWizardStaffWizardCharacter* Wizard = GetWizardForPlayerIndex(PlayerIndex);
 	const int32 StaffSegmentScore = Wizard ? Wizard->GetStaffSegmentCount() : 0;
 	const int32 StaffsAtDawnScore = GetStaffsAtDawnScore(PlayerIndex);
-	const int32 CurrentTrialScore = ActiveTrialType == EWizardTrialType::StaffsAtDawn ? StaffsAtDawnScore : StaffSegmentScore;
+	const int32 CauldronScore = GetCauldronScore(PlayerIndex);
+	const int32 CurrentTrialScore = ActiveTrialType == EWizardTrialType::StaffsAtDawn
+		? StaffsAtDawnScore
+		: (ActiveTrialType == EWizardTrialType::CauldronCatastrophe ? CauldronScore : StaffSegmentScore);
 	const bool bReady = IsPartyHallPlayerReady(PlayerIndex);
 	const bool bBot = IsPlayerIndexPlaytestBot(PlayerIndex);
 	const FString SummaryText = FString::Printf(
-		TEXT("P%d Staff %d Favor %d Wins %d Dawn %d%s"),
+		TEXT("P%d Staff %d Favor %d Wins %d Dawn %d Cauldron %d%s"),
 		PlayerIndex + 1,
 		StaffSegmentScore,
 		GetPlayerGrandWizardFavor(PlayerIndex),
 		GetPlayerRoundWins(PlayerIndex),
 		StaffsAtDawnScore,
+		CauldronScore,
 		bBot ? TEXT(" BOT") : TEXT(""));
 
-	WizardPlayerState->SetWizardPlayerMirror(
+	const bool bMirrorChanged = WizardPlayerState->SetWizardPlayerMirror(
 		PlayerIndex,
 		PlayerIndex,
 		GetPlayerRoundWins(PlayerIndex),
@@ -2442,7 +5095,10 @@ void AWizardStaffGameMode::SyncReplicatedPlayerStateForIndex(int32 PlayerIndex)
 		bReady,
 		bBot,
 		SummaryText);
-	WizardPlayerState->ForceNetUpdate();
+	if (bMirrorChanged)
+	{
+		WizardPlayerState->ForceNetUpdate();
+	}
 }
 
 void AWizardStaffGameMode::SyncAllReplicatedPlayerStates()
@@ -2450,6 +5106,7 @@ void AWizardStaffGameMode::SyncAllReplicatedPlayerStates()
 	int32 DesiredSize = FMath::Max(GetDesiredLocalPlayerCountForSession(), PlayerRoundWins.Num());
 	DesiredSize = FMath::Max(DesiredSize, PlayerGrandWizardFavor.Num());
 	DesiredSize = FMath::Max(DesiredSize, StaffsAtDawnScores.Num());
+	DesiredSize = FMath::Max(DesiredSize, CauldronScores.Num());
 	for (const AWizardStaffWizardCharacter* Wizard : GetCurrentWizards())
 	{
 		const int32 PlayerIndex = GetPlayerIndexForWizard(Wizard);
@@ -2933,6 +5590,29 @@ FString AWizardStaffGameMode::GetActiveTrialName() const
 int32 AWizardStaffGameMode::GetStaffsAtDawnScore(int32 PlayerIndex) const
 {
 	return StaffsAtDawnScores.IsValidIndex(PlayerIndex) ? StaffsAtDawnScores[PlayerIndex] : 0;
+}
+
+int32 AWizardStaffGameMode::GetCauldronScore(int32 PlayerIndex) const
+{
+	return CauldronScores.IsValidIndex(PlayerIndex) ? CauldronScores[PlayerIndex] : 0;
+}
+
+int32 AWizardStaffGameMode::GetCauldronBankingPlayerIndex() const
+{
+	return GetPlayerIndexForWizard(CauldronBankingWizard.Get());
+}
+
+float AWizardStaffGameMode::GetCauldronBankingProgressAlpha() const
+{
+	if (!CauldronBankingWizard.IsValid())
+	{
+		return 0.0f;
+	}
+
+	const float FullTransferDuration = CauldronBankingTransferredCount == 0
+		? FMath::Max(CauldronCatastropheTuning.BankingInitialDelay, 0.01f)
+		: FMath::Max(CauldronCatastropheTuning.BankingVialTransferInterval, 0.01f);
+	return FMath::Clamp(1.0f - (CauldronBankingNextTransferRemainingTime / FullTransferDuration), 0.0f, 1.0f);
 }
 
 FString AWizardStaffGameMode::GetStaffsAtDawnFeedbackMessage() const
@@ -3467,6 +6147,25 @@ FTransform AWizardStaffGameMode::GetSpawnTransformForController(const AControlle
 
 	const int32 TargetPlayerCount = GetDesiredLocalPlayerCountForSession();
 	const int32 ControllerIndex = GetControllerIndex(Controller);
+	if (bCauldronCatastropheActive && IsValid(ActiveCauldronArena))
+	{
+		const float AngleRadians = (2.0f * UE_PI * static_cast<float>(ControllerIndex)) / static_cast<float>(TargetPlayerCount);
+		const float SpawnDistance = FMath::Min(SpawnRadius, FMath::Max(CauldronCatastropheTuning.ArenaHalfSize - 260.0f, 100.0f));
+		const AWizardStaffWizardCharacter* Wizard = Controller ? Cast<AWizardStaffWizardCharacter>(Controller->GetPawn()) : nullptr;
+		const float CapsuleHalfHeight = Wizard && Wizard->GetCapsuleComponent()
+			? Wizard->GetCapsuleComponent()->GetScaledCapsuleHalfHeight()
+			: 88.0f;
+		const float SpawnZ = ActiveCauldronArena->GetFloorSurfaceZ()
+			- ActiveCauldronArena->GetActorLocation().Z
+			+ CapsuleHalfHeight + 2.0f;
+		const FVector SpawnLocation = ActiveCauldronArena->GetActorLocation()
+			+ FVector(FMath::Cos(AngleRadians) * SpawnDistance, FMath::Sin(AngleRadians) * SpawnDistance, SpawnZ);
+		FRotator SpawnRotation = (ActiveCauldronArena->GetActorLocation() - SpawnLocation).Rotation();
+		SpawnRotation.Pitch = 0.0f;
+		SpawnRotation.Roll = 0.0f;
+		return FTransform(SpawnRotation, SpawnLocation);
+	}
+
 	if (ShouldUseStaffsAtDawnArena())
 	{
 		FTransform StaffsAtDawnSpawnTransform;
@@ -3476,7 +6175,7 @@ FTransform AWizardStaffGameMode::GetSpawnTransformForController(const AControlle
 		}
 	}
 
-	if (ActivePrototypeArena)
+	if (!bCauldronCatastropheActive && ActivePrototypeArena)
 	{
 		FTransform AuthoredSpawnTransform;
 		if (ActivePrototypeArena->GetPlayerSpawnTransform(ControllerIndex, TargetPlayerCount, AuthoredSpawnTransform))
@@ -3523,6 +6222,15 @@ int32 AWizardStaffGameMode::GetControllerIndex(const AController* Controller) co
 	if (!Controller)
 	{
 		return 0;
+	}
+
+	if (const AWizardStaffPlayerState* WizardPlayerState = Cast<AWizardStaffPlayerState>(Controller->PlayerState))
+	{
+		const int32 AssignedSlot = WizardPlayerState->GetWizardDisplaySlot();
+		if (AssignedSlot >= 0)
+		{
+			return AssignedSlot;
+		}
 	}
 
 	const UWorld* World = GetWorld();
@@ -3885,7 +6593,10 @@ void AWizardStaffGameMode::UpdatePartyHallSigns() const
 	const FString ReadyLine = PartyHallTuning.bEnableReadyBell
 		? FString::Printf(TEXT("\nReady %d/%d"), GetPartyHallReadyPlayerCount(), CurrentWizards.Num())
 		: FString();
-	const FString CountdownText = FString::Printf(TEXT("NEXT TRIAL\n%s\n%.0fs%s"), *GetActiveTrialName(), IntermissionRemainingTime, *ReadyLine);
+	const FString NextPhaseName = CompletedTrialCount >= FMath::Max(PartyMatchTuning.TrialsBeforeFinalRound, 1)
+		? TEXT("Grand Wizard Final")
+		: GetActiveTrialName();
+	const FString CountdownText = FString::Printf(TEXT("NEXT TRIAL\n%s\n%.0fs%s"), *NextPhaseName, IntermissionRemainingTime, *ReadyLine);
 	const FString PresetText = FString::Printf(TEXT("PRESET\n%s"), *GetActivePrototypeTuningPresetText());
 
 	ActivePartyHall->UpdateIntermissionSigns(StandingsText, CountdownText, PresetText, LeaderText);
@@ -4036,30 +6747,30 @@ void AWizardStaffGameMode::SpawnMugRunPickups()
 	}
 }
 
-void AWizardStaffGameMode::ResetMugRunForNewMatch()
+void AWizardStaffGameMode::ResetMugRunStateForNewTrial()
 {
-	ClearPendingOutOfArenaRespawns();
 	MugRunWinnerMessage.Reset();
 	MugRunRemainingTime = MugRunTuning.MatchDuration;
 	MugRunPostMatchRemainingTime = 0.0f;
 	bMugRunMatchActive = false;
 	MugRunMatchState = EWizardMugRunMatchState::WaitingToStart;
-
-	if (LooseSegmentChaosTuning.bCleanupLooseSegmentsOnRematch)
-	{
-		CleanupLooseSnappedSegments();
-	}
-
-	ResetWizardsForNewMatch();
 	ResetMugRunPickups();
 }
 
 EWizardTrialType AWizardStaffGameMode::GetTrialTypeForTrialIndex(int32 TrialIndex) const
 {
-	return (TrialIndex % 2) == 0 ? EWizardTrialType::MugRun : EWizardTrialType::StaffsAtDawn;
+	switch (TrialIndex)
+	{
+	case 0:
+		return EWizardTrialType::MugRun;
+	case 1:
+		return EWizardTrialType::StaffsAtDawn;
+	default:
+		return EWizardTrialType::CauldronCatastrophe;
+	}
 }
 
-void AWizardStaffGameMode::RespawnWizardsForTrialStart()
+void AWizardStaffGameMode::StageWizardsForCurrentPhase()
 {
 	for (AWizardStaffWizardCharacter* Wizard : GetCurrentWizards())
 	{
@@ -4452,17 +7163,6 @@ void AWizardStaffGameMode::HandleStaffsAtDawnPowerupPickedUp(AWizardStaffStaffsA
 	RemoveStaffsAtDawnPowerupAtIndex(SpawnIndex, true, RespawnDelayOverride);
 }
 
-void AWizardStaffGameMode::RespawnWizardsForStaffsAtDawn()
-{
-	for (AWizardStaffWizardCharacter* Wizard : GetCurrentWizards())
-	{
-		if (Wizard)
-		{
-			RespawnWizardInArena(Wizard);
-		}
-	}
-}
-
 void AWizardStaffGameMode::EnsureStaffsAtDawnScoreSize(int32 MinimumPlayerCount)
 {
 	int32 DesiredSize = FMath::Max(MinimumPlayerCount, GetDesiredLocalPlayerCountForSession());
@@ -4690,7 +7390,7 @@ void AWizardStaffGameMode::AnnounceStaffsAtDawnWinner()
 	}
 }
 
-void AWizardStaffGameMode::ResetWizardsForNewMatch()
+void AWizardStaffGameMode::ResetWizardGameplayStateForMatchSetup()
 {
 	for (AWizardStaffWizardCharacter* Wizard : GetCurrentWizards())
 	{
@@ -4700,7 +7400,6 @@ void AWizardStaffGameMode::ResetWizardsForNewMatch()
 		}
 
 		Wizard->ResetForNewMatch(RematchTuning.bResetStaffsBetweenMatches, RematchTuning.bResetSloshBetweenMatches);
-		RespawnWizardInArena(Wizard);
 	}
 }
 
@@ -5214,32 +7913,49 @@ AWizardStaffWizardCharacter* AWizardStaffGameMode::GetWizardForPlayerIndex(int32
 		return nullptr;
 	}
 
-	int32 ControllerIndex = 0;
 	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
 	{
 		const APlayerController* PlayerController = It->Get();
-		if (!PlayerController)
-		{
-			++ControllerIndex;
-			continue;
-		}
-
-		if (ControllerIndex == PlayerIndex)
+		const AWizardStaffPlayerState* WizardPlayerState = PlayerController
+			? Cast<AWizardStaffPlayerState>(PlayerController->PlayerState)
+			: nullptr;
+		if (WizardPlayerState && WizardPlayerState->GetWizardDisplaySlot() == PlayerIndex)
 		{
 			return Cast<AWizardStaffWizardCharacter>(PlayerController->GetPawn());
 		}
-		++ControllerIndex;
 	}
 
 	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
 	{
 		const APlayerController* PlayerController = It->Get();
 		const APlayerState* PlayerState = PlayerController ? PlayerController->PlayerState : nullptr;
-		const int32 CurrentPlayerIndex = PlayerState ? FMath::Max(PlayerState->GetPlayerId(), 0) : INDEX_NONE;
+		const AWizardStaffPlayerState* WizardPlayerState = Cast<AWizardStaffPlayerState>(PlayerState);
+		if (WizardPlayerState && WizardPlayerState->GetWizardDisplaySlot() >= 0)
+		{
+			continue;
+		}
+		const int32 CurrentPlayerIndex = PlayerState && PlayerState->GetPlayerId() >= 0
+			? PlayerState->GetPlayerId()
+			: INDEX_NONE;
 		if (CurrentPlayerIndex == PlayerIndex)
 		{
 			return Cast<AWizardStaffWizardCharacter>(PlayerController->GetPawn());
 		}
+	}
+
+	int32 ControllerIndex = 0;
+	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+	{
+		const APlayerController* PlayerController = It->Get();
+		const AWizardStaffPlayerState* WizardPlayerState = PlayerController
+			? Cast<AWizardStaffPlayerState>(PlayerController->PlayerState)
+			: nullptr;
+		const bool bHasAssignedSlot = WizardPlayerState && WizardPlayerState->GetWizardDisplaySlot() >= 0;
+		if (PlayerController && !bHasAssignedSlot && ControllerIndex == PlayerIndex)
+		{
+			return Cast<AWizardStaffWizardCharacter>(PlayerController->GetPawn());
+		}
+		++ControllerIndex;
 	}
 
 	return nullptr;
@@ -5560,6 +8276,8 @@ FString AWizardStaffGameMode::GetTrialTypeText(EWizardTrialType TrialType)
 	{
 	case EWizardTrialType::StaffsAtDawn:
 		return TEXT("Staffs at Dawn");
+	case EWizardTrialType::CauldronCatastrophe:
+		return TEXT("Cauldron Catastrophe");
 	case EWizardTrialType::MugRun:
 	default:
 		return TEXT("Mug Run");
@@ -5792,6 +8510,11 @@ AStaticMeshActor* AWizardStaffGameMode::SpawnArenaBlock(FName Name, const FVecto
 
 FVector AWizardStaffGameMode::GetArenaCenter() const
 {
+	if (bCauldronCatastropheActive)
+	{
+		return IsValid(ActiveCauldronArena) ? ActiveCauldronArena->GetActorLocation() : RuntimeCauldronArenaLocation;
+	}
+
 	if (ShouldUseStaffsAtDawnArena())
 	{
 		return ActiveStaffsAtDawnArena->GetArenaBoundsCenter();
@@ -5822,6 +8545,11 @@ float AWizardStaffGameMode::GetCurrentPlayBoundsHalfSize() const
 		return ActiveStaffsAtDawnArena->GetArenaHalfSize();
 	}
 
+	if (bCauldronCatastropheActive)
+	{
+		return CauldronCatastropheTuning.ArenaHalfSize;
+	}
+
 	return ArenaHalfSize;
 }
 
@@ -5848,6 +8576,14 @@ void AWizardStaffGameMode::UpdateOutOfArenaRespawns(float DeltaSeconds)
 		return;
 	}
 
+	// Countdown, Results, and Party Hall deliberately stage wizards away from the active Trial bounds.
+	// Treating those positions as ring-outs can race the phase teleport and produce empty-arena flashes.
+	if (ActiveTrialState != EWizardTrialState::Active)
+	{
+		ClearPendingOutOfArenaRespawns();
+		return;
+	}
+
 	TArray<TWeakObjectPtr<AWizardStaffWizardCharacter>> TimersToRemove;
 	TArray<TWeakObjectPtr<AWizardStaffWizardCharacter>> WizardsToRespawn;
 
@@ -5862,6 +8598,7 @@ void AWizardStaffGameMode::UpdateOutOfArenaRespawns(float DeltaSeconds)
 
 		if (OutOfArenaRespawnTuning.bCancelRespawnIfPlayerReturns && !IsWizardOutOfArena(Wizard))
 		{
+			CauldronProcessedRingOutSpills.Remove(PendingRespawn.Key);
 			RecordTelemetryBroomBoostRingOutSave(Wizard);
 			Wizard->SyncReplicatedOutOfArenaRespawnStateFromAuthority(false, 0.0f, true);
 			TimersToRemove.Add(PendingRespawn.Key);
@@ -5887,6 +8624,7 @@ void AWizardStaffGameMode::UpdateOutOfArenaRespawns(float DeltaSeconds)
 		{
 			RecordTelemetryOutOfArenaRespawn(Wizard);
 			RespawnWizardInArena(Wizard);
+			CauldronProcessedRingOutSpills.Remove(WizardKey);
 		}
 	}
 
@@ -5908,6 +8646,10 @@ void AWizardStaffGameMode::UpdateOutOfArenaRespawns(float DeltaSeconds)
 			const float RespawnDelay = FMath::Max(OutOfArenaRespawnTuning.RespawnDelay, 0.0f);
 			PendingOutOfArenaRespawns.Add(WizardKey, RespawnDelay);
 			Wizard->CancelStaffClashStateForReset();
+			if (bCauldronCatastropheActive)
+			{
+				HandleCauldronRingOutSpill(Wizard);
+			}
 			Wizard->SyncReplicatedOutOfArenaRespawnStateFromAuthority(true, RespawnDelay, true);
 			const int32 PlayerIndex = GetPlayerIndexForWizard(Wizard);
 			PublishReplicatedGameplayEvent(
@@ -6000,7 +8742,8 @@ void AWizardStaffGameMode::EnterPartyHallIntermission()
 	PartyMatchState = EWizardPartyMatchState::PartyHall;
 	ActiveTrialState = EWizardTrialState::WaitingToStart;
 	bWizardsStagedForActiveTrial = false;
-	SetWizardPrototypeInputsLocked(false);
+	// Lock only during the authoritative transfer away from a prior Trial floor.
+	SetWizardPrototypeInputsLocked(true);
 	if (CompletedTrialCount > 0)
 	{
 		ClearReplicatedGameplayEventFeed();
@@ -6016,18 +8759,17 @@ void AWizardStaffGameMode::EnterPartyHallIntermission()
 	bMugRunMatchActive = false;
 	MugRunMatchState = EWizardMugRunMatchState::WaitingToStart;
 	SetMugRunPickupsActive(false);
+	// Keep the Mug Run arena out of sight and collision while Party Hall owns the next phase.
+	SetPrototypeArenaPhasePresentationActive(false);
 	ClearPendingOutOfArenaRespawns();
 	ResetPartyHallReadyStates();
 
-	for (AWizardStaffWizardCharacter* Wizard : GetCurrentWizards())
-	{
-		if (!Wizard)
-		{
-			continue;
-		}
+	StageWizardsForCurrentPhase();
 
-		RespawnWizardInArena(Wizard);
-	}
+	// Keep the prior Cauldron arena alive for the full intermission. On clients, actor destruction
+	// can arrive before the pawn teleport is visually settled even when the server orders teleport first.
+	// StartTrialCountdown or EnterGrandWizardFinalRound performs teardown after this grace period.
+	SetWizardPrototypeInputsLocked(false);
 	UpdatePartyHallSigns();
 
 	AWizardStaffHUD::PushGameplayMessage(this, FString::Printf(TEXT("Party Hall intermission %.0fs"), IntermissionRemainingTime), FColor::Cyan, 2.0f, EWizardHudMessageCategory::Gameplay);

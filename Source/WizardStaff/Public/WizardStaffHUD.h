@@ -143,6 +143,7 @@ protected:
 	void DrawScoringClarityPanel();
 	void DrawPartyHallStandingsPanel(const class AWizardStaffGameMode* GameMode);
 	void DrawStaffsAtDawnScorePanel(const class AWizardStaffGameMode* GameMode);
+	void DrawCauldronScorePanel(const class AWizardStaffGameMode* GameMode);
 	void DrawTrialResultsPanel(const class AWizardStaffGameMode* GameMode);
 	void DrawFinalIntroPanel(const class AWizardStaffGameMode* GameMode);
 	void DrawCompactFinalHud(const class AWizardStaffGameMode* GameMode);

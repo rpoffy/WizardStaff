@@ -3,6 +3,8 @@
 #include "CoreMinimal.h"
 #include "InputCoreTypes.h"
 #include "GameFramework/GameModeBase.h"
+#include "WizardStaffCauldronArena.h"
+#include "WizardStaffCauldronVialTypes.h"
 #include "WizardStaffStaffsAtDawnPowerupTypes.h"
 #include "WizardStaffGameMode.generated.h"
 
@@ -11,11 +13,17 @@ class AStaticMeshActor;
 class AController;
 class APlayerController;
 class AWizardStaffManaMugPickup;
+class AWizardStaffCauldronHazard;
+class AWizardStaffCauldronDepositArc;
+class AWizardStaffCauldronCurseBomb;
+class AWizardStaffCauldronIngredient;
+class AWizardStaffCauldronVialPickup;
 class AWizardStaffFinalRitualCircle;
 class AWizardStaffGameState;
 class AWizardStaffPlayerState;
 class AWizardStaffPartyHall;
 class AWizardStaffPrototypeArena;
+class AWizardStaffPrototypeLighting;
 class AWizardStaffStaffsAtDawnArena;
 class AWizardStaffStaffsAtDawnPowerupPickup;
 class AWizardStaffSharedCamera;
@@ -23,6 +31,7 @@ class AWizardStaffWizardCharacter;
 class UMaterialInstanceDynamic;
 class UPrimitiveComponent;
 enum class EWizardReplicatedGameplayEventType : uint8;
+enum class EWizardCauldronHazardType : uint8;
 
 UENUM(BlueprintType)
 enum class EWizardMugRunMatchState : uint8
@@ -56,7 +65,8 @@ UENUM(BlueprintType)
 enum class EWizardTrialType : uint8
 {
 	MugRun,
-	StaffsAtDawn
+	StaffsAtDawn,
+	CauldronCatastrophe
 };
 
 UENUM(BlueprintType)
@@ -133,7 +143,7 @@ struct FWizardPartyMatchTuning
 	float TrialResultsDisplayDuration = 6.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Party Match", meta = (ClampMin = "1"))
-	int32 TrialsBeforeFinalRound = 2;
+	int32 TrialsBeforeFinalRound = 3;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Party Match|Reset")
 	bool bResetStaffsAtTrialStart = true;
@@ -248,6 +258,232 @@ struct FWizardGrandWizardFavorTuning
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grand Wizard Favor", meta = (ClampMin = "0"))
 	int32 FavorPerStaffsAtDawnRingOut = 1;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grand Wizard Favor", meta = (ClampMin = "0"))
+	int32 CauldronCatastropheWinnerFavor = 3;
+};
+
+USTRUCT(BlueprintType)
+struct FWizardCauldronCatastropheTuning
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe", meta = (ClampMin = "5.0"))
+	float TrialDuration = 90.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Arena", meta = (ClampMin = "600.0"))
+	float ArenaHalfSize = 1600.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Ingredients", meta = (ClampMin = "1"))
+	int32 InitialIngredientCount = 4;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Ingredients", meta = (ClampMin = "1"))
+	int32 MaximumActiveIngredients = 6;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Ingredients", meta = (ClampMin = "0.0"))
+	float IngredientRespawnDelay = 1.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Ingredients", meta = (ClampMin = "0.0"))
+	float IngredientBonkImpulse = 1050.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Ingredients", meta = (ClampMin = "0"))
+	int32 StaffSegmentsPerIngredient = 2;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Ingredients", meta = (ClampMin = "100.0"))
+	float IngredientSpawnRadius = 720.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Vials", meta = (ClampMin = "1"))
+	int32 InitialVialCount = 5;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Vials", meta = (ClampMin = "1"))
+	int32 MaximumActiveVials = 7;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Vials", meta = (ClampMin = "0.0"))
+	float VialRespawnDelay = 2.0f;
+
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Vials", meta = (ClampMin = "1.0"))
+	float VialPickupRadius = 70.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Vials", meta = (ClampMin = "100.0"))
+	float VialSpawnRadius = 690.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Vials", meta = (ClampMin = "0.0"))
+	float VialMinimumCauldronDistance = 300.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Vials", meta = (ClampMin = "0.0"))
+	float VialMinimumDropOffDistance = 180.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Vials", meta = (ClampMin = "0.0"))
+	float VialMinimumPlayerSpacing = 180.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Vials", meta = (ClampMin = "0.0"))
+	float VialMinimumVialSpacing = 160.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Intake", meta = (ClampMin = "100.0"))
+	float ActiveIntakeDistanceFromCauldronCenter = 315.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Intake", meta = (ClampMin = "50.0"))
+	float ActiveIntakeAcceptanceRadius = 220.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Intake", meta = (ClampMin = "0.1"))
+	float ActiveIntakeVisualScale = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Intake", meta = (ClampMin = "0.1"))
+	float ActiveIntakePulseSpeed = 4.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Intake", meta = (ClampMin = "0.0"))
+	float ActiveIntakeChangeWarningDuration = 0.85f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Banking", meta = (ClampMin = "0.0"))
+	float BankingInitialDelay = 0.30f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Banking", meta = (ClampMin = "0.05"))
+	float BankingVialTransferInterval = 0.35f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Banking", meta = (ClampMin = "50.0"))
+	float BankingMaximumDistanceFromIntake = 360.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Banking", meta = (ClampMin = "0.05", ClampMax = "1.0"))
+	float BankingMovementMultiplier = 0.45f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Banking", meta = (ClampMin = "0.05", ClampMax = "1.0"))
+	float BankingAccelerationMultiplier = 0.50f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Ring Out", meta = (ClampMin = "0"))
+	int32 RingOutVialsSpilled = 2;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Ring Out", meta = (ClampMin = "0.0"))
+	float RingOutSpillRadius = 130.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Ring Out", meta = (ClampMin = "0.0"))
+	float RingOutSpillEdgeBuffer = 180.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Vial Instability", meta = (ClampMin = "0"))
+	int32 VialInstabilitySafeCount = 2;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Vial Instability", meta = (ClampMin = "0.0"))
+	float VialInstabilityStressPerExtraVial = 0.15f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Vial Instability", meta = (ClampMin = "1.0"))
+	float VialInstabilityMaximumMultiplier = 1.60f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Vial Instability")
+	bool bEnableVialInstability = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Vials", meta = (ClampMin = "0.05"))
+	float SpeedVialMovementMultiplier = 1.35f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Vials", meta = (ClampMin = "0.05"))
+	float SpeedVialAccelerationMultiplier = 1.20f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Vials", meta = (ClampMin = "0.05"))
+	float BurdeningPowerMovementMultiplier = 0.75f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Vials", meta = (ClampMin = "0.05"))
+	float BurdeningPowerBonkMultiplier = 1.75f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Hazards", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float DepositHazardChance = 0.25f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Hazards", meta = (ClampMin = "1.0"))
+	float HazardLifetime = 7.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Hazards", meta = (ClampMin = "25.0"))
+	float HazardRadius = 185.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Hazards", meta = (ClampMin = "1"))
+	int32 MaximumActiveHazards = 4;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Hazards", meta = (ClampMin = "0.05", ClampMax = "1.0"))
+	float SlipperyFrictionMultiplier = 0.16f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Hazards", meta = (ClampMin = "0.05", ClampMax = "1.0"))
+	float SlipperyBrakingMultiplier = 0.20f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Hazards", meta = (ClampMin = "0.05"))
+	float SlipperySkidDuration = 1.50f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Hazards", meta = (ClampMin = "0.0"))
+	float SlipperySkidMinimumImpulse = 720.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Hazards", meta = (ClampMin = "0.0"))
+	float SlipperySkidMaximumImpulse = 1480.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Hazards", meta = (ClampMin = "0.0"))
+	float SlipperySkidAcceleration = 1350.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Hazards", meta = (ClampMin = "0.05", ClampMax = "1.0"))
+	float StickyMovementMultiplier = 0.62f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Hazards", meta = (ClampMin = "0.05", ClampMax = "1.0"))
+	float StickyAccelerationMultiplier = 0.55f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Hazards", meta = (ClampMin = "0.05", ClampMax = "1.0"))
+	float StickyTurningMultiplier = 0.60f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Curse", meta = (ClampMin = "0.0"))
+	float FirstCurseDelay = 18.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Curse", meta = (ClampMin = "1.0"))
+	float CurseCadence = 15.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Curse", meta = (ClampMin = "0.1"))
+	float CurseDuration = 3.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Curse Deposit", meta = (ClampMin = "0.1"))
+	float CurseDepositBoilWarningDuration = 1.15f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Curse Deposit", meta = (ClampMin = "1", ClampMax = "12"))
+	int32 CurseDepositExplosionCount = 8;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Curse Deposit", meta = (ClampMin = "0.0", ClampMax = "0.49"))
+	float CurseDepositExplosionAngularJitterFraction = 0.35f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Curse Deposit", meta = (ClampMin = "0.01"))
+	float CurseDepositExplosionLaunchInterval = 0.16f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Curse Deposit", meta = (ClampMin = "0.05"))
+	float CurseDepositExplosionFlightDuration = 0.55f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Curse Deposit", meta = (ClampMin = "25.0"))
+	float CurseDepositExplosionRadius = 210.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Curse Deposit", meta = (ClampMin = "0.0"))
+	float CurseDepositExplosionMinimumDistance = 420.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Curse Deposit", meta = (ClampMin = "0.0"))
+	float CurseDepositExplosionMaximumDistance = 1120.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Curse Deposit", meta = (ClampMin = "0.0"))
+	float CurseDepositExplosionHorizontalKnockback = 2325.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Curse Deposit", meta = (ClampMin = "0.0"))
+	float CurseDepositExplosionVerticalKnockback = 937.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Curse")
+	FVector CurseOrbStaffRelativeLocation = FVector(0.0f, 0.0f, 135.0f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Curse")
+	bool bAllowSameWizardConsecutiveCurse = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Curse", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float StaffClashCountdownRate = 0.25f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Curse", meta = (ClampMin = "0.0"))
+	float ExplosionHorizontalKnockback = 3100.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Curse", meta = (ClampMin = "0.0"))
+	float ExplosionVerticalKnockback = 1250.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Curse", meta = (ClampMin = "0.0"))
+	float GroundCurseExplosionRadius = 220.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Curse", meta = (ClampMin = "0.0"))
+	float GroundCurseExplosionKnockback = 1250.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cauldron Catastrophe|Curse", meta = (ClampMin = "0.0"))
+	float GroundCurseExplosionUpwardBoost = 480.0f;
 };
 
 USTRUCT(BlueprintType)
@@ -943,6 +1179,93 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Staffs At Dawn")
 	void EndStaffsAtDawnTrial();
 
+	UFUNCTION(BlueprintCallable, Category = "Cauldron Catastrophe")
+	void StartCauldronCatastropheTrial();
+
+	UFUNCTION(BlueprintCallable, Category = "Cauldron Catastrophe")
+	void EndCauldronCatastropheTrial();
+
+	UFUNCTION(BlueprintCallable, Exec, Category = "Cauldron Catastrophe|Debug")
+	void DebugStartCauldronCatastrophe();
+
+	UFUNCTION(BlueprintCallable, Exec, Category = "Cauldron Catastrophe|Debug")
+	void DebugSpawnCauldronIngredient();
+
+	UFUNCTION(BlueprintCallable, Exec, Category = "Cauldron Catastrophe|Debug")
+	void DebugSpawnCauldronVial(const FString& VialType);
+
+	UFUNCTION(BlueprintCallable, Exec, Category = "Cauldron Catastrophe|Debug")
+	void DebugGiveCauldronVial(int32 PlayerIndex, const FString& VialType);
+
+	UFUNCTION(BlueprintCallable, Exec, Category = "Cauldron Catastrophe|Debug")
+	void DebugBreakTopCauldronVialSegment(int32 PlayerIndex);
+
+	UFUNCTION(BlueprintCallable, Exec, Category = "Cauldron Catastrophe|Debug")
+	void DebugPrintCauldronVialStack(int32 PlayerIndex);
+
+	UFUNCTION(BlueprintCallable, Exec, Category = "Cauldron Catastrophe|Debug")
+	void DebugPrintCauldronInstability(int32 PlayerIndex);
+
+	UFUNCTION(BlueprintCallable, Exec, Category = "Cauldron Catastrophe|Debug")
+	void DebugApplyCauldronInstabilityTestHit(int32 AttackerIndex, int32 TargetIndex);
+
+	UFUNCTION(BlueprintCallable, Exec, Category = "Cauldron Catastrophe|Debug")
+	void DebugValidateCauldronVialState(int32 PlayerIndex);
+
+	UFUNCTION(BlueprintCallable, Exec, Category = "Cauldron Catastrophe|Debug")
+	void DebugClearCauldronVials();
+
+	UFUNCTION(BlueprintCallable, Exec, Category = "Cauldron Catastrophe|Debug")
+	void DebugDepositCauldronVials(int32 PlayerIndex);
+
+	UFUNCTION(BlueprintCallable, Exec, Category = "Cauldron Catastrophe|Debug")
+	void DebugSpillCauldronVials(int32 PlayerIndex);
+
+	UFUNCTION(BlueprintCallable, Exec, Category = "Cauldron Catastrophe|Debug")
+	void DebugPrintCauldronSpillState(int32 PlayerIndex);
+
+	UFUNCTION(BlueprintCallable, Exec, Category = "Cauldron Catastrophe|Debug")
+	void DebugSetCauldronLastSafePosition(int32 PlayerIndex);
+
+	UFUNCTION(BlueprintCallable, Exec, Category = "Cauldron Catastrophe|Debug")
+	void DebugAssignCauldronCurse(int32 PlayerIndex);
+
+	UFUNCTION(BlueprintCallable, Exec, Category = "Cauldron Catastrophe|Debug")
+	void DebugClearCauldronHazards();
+
+	UFUNCTION(BlueprintCallable, Exec, Category = "Cauldron Catastrophe|Debug")
+	void DebugEndCauldronCatastrophe();
+
+	UFUNCTION(BlueprintCallable, Exec, Category = "Cauldron Catastrophe|Debug")
+	void DebugAddCauldronScore(int32 PlayerIndex, int32 Amount = 1);
+
+	UFUNCTION(BlueprintCallable, Exec, Category = "Cauldron Catastrophe|Debug")
+	void DebugSetCauldronIntake(const FString& IntakeDirection);
+
+	UFUNCTION(BlueprintCallable, Exec, Category = "Cauldron Catastrophe|Debug")
+	void DebugRotateCauldronIntake();
+
+	UFUNCTION(BlueprintCallable, Exec, Category = "Cauldron Catastrophe|Debug")
+	void DebugPrintCauldronIntakeState();
+
+	UFUNCTION(BlueprintCallable, Exec, Category = "Cauldron Catastrophe|Debug")
+	void DebugStartCauldronBanking(int32 PlayerIndex);
+
+	UFUNCTION(BlueprintCallable, Exec, Category = "Cauldron Catastrophe|Debug")
+	void DebugInterruptCauldronBanking();
+
+	UFUNCTION(BlueprintCallable, Exec, Category = "Cauldron Catastrophe|Debug")
+	void DebugPrintCauldronBankingState();
+
+	bool HandleCauldronIngredientBonked(AWizardStaffWizardCharacter* Attacker, AWizardStaffCauldronIngredient* Ingredient);
+	bool HandleCauldronVialCollected(AWizardStaffWizardCharacter* Collector, EWizardCauldronVialType VialType);
+	void NotifyCauldronVialSegmentSnapped(AWizardStaffWizardCharacter* Wizard, FName RemovedSegmentTag);
+	bool HandleCauldronQuickBonk(AWizardStaffWizardCharacter* Attacker, int32 BonkSequence);
+	void GatherCauldronIngredientsInBonkBox(const FVector& BoxCenter, const FQuat& BoxRotation, const FVector& BoxExtent, TArray<AWizardStaffCauldronIngredient*>& OutIngredients) const;
+	void GatherCauldronIngredientsInBonkArc(const AWizardStaffWizardCharacter* Attacker, TArray<AWizardStaffCauldronIngredient*>& OutIngredients) const;
+	void NotifyCauldronWizardBonked(AWizardStaffWizardCharacter* Attacker, AWizardStaffWizardCharacter* Target);
+	void NotifyCauldronCursedWizardStaffSnapped(AWizardStaffWizardCharacter* Wizard);
+
 	UFUNCTION(BlueprintCallable, Exec, Category = "Mug Run")
 	void RestartMugRunMatch();
 
@@ -1027,6 +1350,30 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Grand Wizard Favor")
 	FString GetGrandWizardFavorFeedbackMessage() const;
+
+	UFUNCTION(BlueprintPure, Category = "Cauldron Catastrophe")
+	int32 GetCauldronScore(int32 PlayerIndex) const;
+
+	UFUNCTION(BlueprintPure, Category = "Cauldron Catastrophe")
+	float GetCauldronRemainingTime() const { return CauldronRemainingTime; }
+
+	UFUNCTION(BlueprintPure, Category = "Cauldron Catastrophe")
+	bool IsCauldronCatastropheTrialActive() const { return bCauldronCatastropheActive; }
+
+	UFUNCTION(BlueprintPure, Category = "Cauldron Catastrophe")
+	int32 GetCauldronCursedPlayerIndex() const { return CauldronCursedPlayerIndex; }
+
+	UFUNCTION(BlueprintPure, Category = "Cauldron Catastrophe")
+	float GetCauldronCurseRemainingTime() const { return CauldronCurseRemainingTime; }
+
+	UFUNCTION(BlueprintPure, Category = "Cauldron Catastrophe")
+	int32 GetCauldronBankingPlayerIndex() const;
+
+	UFUNCTION(BlueprintPure, Category = "Cauldron Catastrophe")
+	int32 GetCauldronBankingTransferredCount() const { return CauldronBankingTransferredCount; }
+
+	UFUNCTION(BlueprintPure, Category = "Cauldron Catastrophe")
+	float GetCauldronBankingProgressAlpha() const;
 
 	UFUNCTION(BlueprintPure, Category = "Party Match")
 	int32 GetCurrentStandingLeaderPlayerIndex() const;
@@ -1299,6 +1646,9 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Staffs At Dawn|Tuning")
 	FWizardStaffsAtDawnTuning StaffsAtDawnTuning;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Cauldron Catastrophe|Tuning")
+	FWizardCauldronCatastropheTuning CauldronCatastropheTuning;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Grand Wizard Favor|Tuning")
 	FWizardGrandWizardFavorTuning GrandWizardFavorTuning;
 
@@ -1351,7 +1701,9 @@ public:
 	TSubclassOf<AWizardStaffStaffsAtDawnPowerupPickup> StaffsAtDawnPowerupPickupClass;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Staffs At Dawn|Arena")
-	FVector RuntimeStaffsAtDawnArenaLocation = FVector(3200.0f, 0.0f, 0.0f);
+	FVector RuntimeStaffsAtDawnArenaLocation = FVector(5000.0f, 0.0f, 0.0f);
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Cauldron Catastrophe|Arena")
+	FVector RuntimeCauldronArenaLocation = FVector(-4000.0f, 0.0f, 0.0f);
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Party Hall")
 	bool bUseAuthoredPartyHall = true;
@@ -1363,7 +1715,7 @@ public:
 	TSubclassOf<AWizardStaffPartyHall> RuntimePartyHallClass;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Party Hall")
-	FVector PartyHallSpawnLocation = FVector(0.0f, 2600.0f, 0.0f);
+	FVector PartyHallSpawnLocation = FVector(0.0f, 4500.0f, 0.0f);
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Party Hall", meta = (ClampMin = "300.0"))
 	float PartyHallFallbackHalfSize = 640.0f;
@@ -1431,6 +1783,15 @@ public:
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Staffs At Dawn")
 	TArray<int32> StaffsAtDawnScores;
 
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Cauldron Catastrophe")
+	TArray<int32> CauldronScores;
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Cauldron Catastrophe")
+	float CauldronRemainingTime = 0.0f;
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Cauldron Catastrophe")
+	bool bCauldronCatastropheActive = false;
+
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Staffs At Dawn")
 	TArray<int32> StaffsAtDawnBonksTowardSegment;
 
@@ -1481,9 +1842,11 @@ protected:
 	bool ShouldHoldOnlineIntermissionForPlayers() const;
 	int32 GetConnectedPlayerControllerCount() const;
 	void AssignOnlineScaffoldPlayerSlot(AController* Controller);
+	int32 FindFirstAvailablePlayerSlot(const AWizardStaffPlayerState* PlayerStateToIgnore = nullptr) const;
 	void EnsureLocalPlayers();
 	void SyncPlaytestBots();
 	void UpdateKeyboardFallbackControls();
+	void SpawnPrototypeLighting();
 	void SpawnSharedCamera();
 	void AssignSharedCameraToAllPlayers();
 	void AssignSharedCameraToPlayer(APlayerController* PlayerController);
@@ -1522,11 +1885,63 @@ protected:
 	void StartActiveTrial();
 	void FinishActiveTrialResults();
 	EWizardTrialType GetTrialTypeForTrialIndex(int32 TrialIndex) const;
-	void RespawnWizardsForTrialStart();
+	void StageWizardsForCurrentPhase();
 	void SetWizardPrototypeInputsLocked(bool bLocked) const;
 	void ResetWizardStaffsForTrialStart();
 	void ResetStaffsAtDawnForNewTrial();
-	void RespawnWizardsForStaffsAtDawn();
+	void UpdateCauldronCatastrophe(float DeltaSeconds);
+	void CleanupCauldronGameplayState();
+	void CleanupCauldronCatastrophe();
+	void SpawnCauldronIngredient();
+	void SpawnCauldronVial(EWizardCauldronVialType ForcedVialType = EWizardCauldronVialType::None);
+	bool SpawnCauldronVialAtLocation(EWizardCauldronVialType VialType, const FVector& SpawnLocation, bool bSpilledPickup);
+	bool GrantCauldronVial(AWizardStaffWizardCharacter* Wizard, EWizardCauldronVialType VialType);
+	float GetCauldronVialInstabilityMultiplier(const AWizardStaffWizardCharacter* Wizard) const;
+	bool ApplyCauldronVialInstabilityForEnemyBonk(AWizardStaffWizardCharacter* Attacker, AWizardStaffWizardCharacter* Target);
+	void RefreshCauldronVialEffects(AWizardStaffWizardCharacter* Wizard);
+	void ClearCauldronVials(bool bRemoveSegments);
+	int32 DepositCauldronVials(AWizardStaffWizardCharacter* Wizard, int32 BonkSequence);
+	bool StartCauldronBanking(AWizardStaffWizardCharacter* Wizard, int32 BonkSequence, bool bBypassIntakeStrike = false);
+	void UpdateCauldronBanking(float DeltaSeconds);
+	bool TransferNextCauldronBankingVial();
+	void SpawnCauldronDepositArc(UStaticMesh* SegmentMesh, const FTransform& StartTransform, EWizardCauldronVialType VialType);
+	void ClearCauldronDepositArcs();
+	void EndCauldronBanking(const FString& EndReason, bool bRelocateAfterSuccess = true);
+	bool IsCauldronBankingWizardValid(const AWizardStaffWizardCharacter* Wizard) const;
+	bool HasValidTopCauldronVial(const AWizardStaffWizardCharacter* Wizard) const;
+	void ApplyCauldronBankingReadability();
+	void UpdateCauldronLastSafePositions();
+	bool IsCauldronSafeSpillPosition(const FVector& Location) const;
+	FVector GetCauldronSpillCenter(const AWizardStaffWizardCharacter* Wizard) const;
+	FVector FindCauldronSpillPickupLocation(const FVector& SpillCenter, int32 SpillIndex, int32 SpillCount) const;
+	int32 SpillCauldronVials(AWizardStaffWizardCharacter* Wizard, bool bInterruptBanking);
+	void HandleCauldronRingOutSpill(AWizardStaffWizardCharacter* Wizard);
+	void ResetCauldronSpillState();
+	bool IsCauldronWithinQuickBonkStrike(const AWizardStaffWizardCharacter* Wizard) const;
+	void ResetCauldronIntakeState();
+	void SetCauldronActiveIntake(EWizardCauldronIntakeDirection NewIntake);
+	void BeginCauldronIntakeRelocation();
+	void UpdateCauldronIntakeRelocation(float DeltaSeconds);
+	void ApplyCauldronIntakeReadability();
+	EWizardCauldronIntakeDirection ChooseNextCauldronIntake(EWizardCauldronIntakeDirection ExcludedIntake) const;
+	EWizardCauldronIntakeDirection ParseCauldronIntakeDirection(const FString& IntakeDirection) const;
+	bool IsCauldronVialSpawnLocationValid(const FVector& CandidateLocation) const;
+	bool ValidateCauldronVialState(const AWizardStaffWizardCharacter* Wizard, FString& OutReport) const;
+	EWizardCauldronVialType ParseCauldronVialType(const FString& TypeText) const;
+	void SpawnCauldronHazard(EWizardCauldronHazardType HazardType);
+	void UpdateCauldronHazardEffects();
+	void GrantCauldronStaffSegments(int32 PlayerIndex, int32 SegmentCount, const FString& Reason);
+	void AssignCauldronCurse(int32 ForcedPlayerIndex = INDEX_NONE);
+	void ClearCauldronCurse(bool bScheduleNext);
+	bool BeginCauldronCurseDeposit(AWizardStaffWizardCharacter* Wizard, int32 BonkSequence);
+	void UpdateCauldronCurseDepositSequence(float DeltaSeconds);
+	void SpawnCauldronCurseDepositBombs();
+	void ExplodeCauldronCurse();
+	void ExplodeGroundedCauldronCurse();
+	void AddCauldronScore(int32 PlayerIndex, int32 Amount, const FString& Reason);
+	void AnnounceCauldronWinner();
+	void EnsureCauldronScoreSize(int32 MinimumPlayerCount = 0);
+	void SetPrototypeArenaPhasePresentationActive(bool bActive);
 	void EnsureStaffsAtDawnScoreSize(int32 MinimumPlayerCount = 0);
 	void AddStaffsAtDawnScore(int32 PlayerIndex, int32 Points, const FString& Reason);
 	void AddStaffsAtDawnBonkSegmentProgress(int32 PlayerIndex);
@@ -1544,6 +1959,7 @@ protected:
 	void EnterGrandWizardFinalRound();
 	void UpdateGrandWizardFinalRound(float DeltaSeconds);
 	void FinishGrandWizardFinalRound();
+	void DispatchAuthoritativeSteamMatchResults();
 	void ResetGrandWizardFinalRoundState();
 	void SpawnOrUpdateFinalRoundCircleVisual();
 	void SetFinalRoundCircleVisible(bool bNewVisible);
@@ -1560,8 +1976,8 @@ protected:
 	void SetGrandWizardCandidate(int32 PlayerIndex, const FString& Reason);
 	void SetGrandWizardFinalFeedbackMessage(const FString& Message, const FColor& MessageColor);
 	void RespawnWizardsForFinalRound();
-	void ResetMugRunForNewMatch();
-	void ResetWizardsForNewMatch();
+	void ResetMugRunStateForNewTrial();
+	void ResetWizardGameplayStateForMatchSetup();
 	void ResetMugRunPickups();
 	void UpdateLooseSnappedSegments(float DeltaSeconds);
 	void PruneLooseSnappedSegments();
@@ -1619,6 +2035,9 @@ private:
 	TObjectPtr<AWizardStaffSharedCamera> SharedCamera;
 
 	UPROPERTY(Transient)
+	TObjectPtr<AWizardStaffPrototypeLighting> ActivePrototypeLighting;
+
+	UPROPERTY(Transient)
 	TObjectPtr<AWizardStaffPrototypeArena> ActivePrototypeArena;
 
 	UPROPERTY(Transient)
@@ -1635,6 +2054,64 @@ private:
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<AWizardStaffStaffsAtDawnPowerupPickup>> SpawnedStaffsAtDawnPowerups;
+
+	UPROPERTY(Transient)
+	TObjectPtr<AWizardStaffCauldronArena> ActiveCauldronArena;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<AWizardStaffCauldronIngredient>> SpawnedCauldronIngredients;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<AWizardStaffCauldronVialPickup>> SpawnedCauldronVials;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<AWizardStaffCauldronHazard>> SpawnedCauldronHazards;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<AWizardStaffCauldronDepositArc>> SpawnedCauldronDepositArcs;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<AWizardStaffCauldronCurseBomb>> SpawnedCauldronCurseDepositBombs;
+
+	TMap<TWeakObjectPtr<AWizardStaffCauldronHazard>, float> CauldronHazardExpirationTimes;
+	TArray<float> PendingCauldronIngredientRespawns;
+	TArray<float> PendingCauldronVialRespawns;
+
+	struct FCauldronVialStackEntry
+	{
+		EWizardCauldronVialType Type = EWizardCauldronVialType::None;
+		FName SegmentTag = NAME_None;
+		int32 PickupOrder = 0;
+	};
+	TMap<TWeakObjectPtr<AWizardStaffWizardCharacter>, TArray<FCauldronVialStackEntry>> CauldronVialStacks;
+	TMap<TWeakObjectPtr<AWizardStaffWizardCharacter>, FVector> CauldronLastSafePositions;
+	TSet<TWeakObjectPtr<AWizardStaffWizardCharacter>> CauldronProcessedRingOutSpills;
+	TSet<TWeakObjectPtr<AWizardStaffCauldronVialPickup>> CauldronSpilledVialPickups;
+	int32 NextCauldronVialPickupOrder = 1;
+	TMap<TWeakObjectPtr<AWizardStaffWizardCharacter>, int32> LastCauldronDepositBonkSequences;
+	TMap<TWeakObjectPtr<AWizardStaffWizardCharacter>, int64> LastCauldronInstabilityBonkKeys;
+	int32 NextCauldronInstabilityFallbackSequence = -1;
+	int32 NextDebugCauldronDepositSequence = -1;
+	TWeakObjectPtr<AWizardStaffWizardCharacter> CauldronBankingWizard;
+	int32 CauldronBankingSessionGeneration = 0;
+	EWizardCauldronIntakeDirection CauldronBankingIntake = EWizardCauldronIntakeDirection::None;
+	float CauldronBankingNextTransferRemainingTime = 0.0f;
+	int32 CauldronBankingTransferredCount = 0;
+	FString CauldronBankingLastEndReason;
+	EWizardCauldronIntakeDirection ActiveCauldronIntake = EWizardCauldronIntakeDirection::None;
+	EWizardCauldronIntakeDirection PreviewCauldronIntake = EWizardCauldronIntakeDirection::None;
+	bool bCauldronIntakeRelocating = false;
+	float CauldronIntakeRelocationRemainingTime = 0.0f;
+
+	float CauldronNextCurseTime = 0.0f;
+	float CauldronCurseRemainingTime = 0.0f;
+	int32 CauldronCursedPlayerIndex = INDEX_NONE;
+	int32 LastCauldronCursedPlayerIndex = INDEX_NONE;
+	TWeakObjectPtr<AActor> CauldronGroundCurseSegment;
+	FVector CauldronGroundCurseLastLocation = FVector::ZeroVector;
+	bool bCauldronCurseGrounded = false;
+	bool bCauldronCurseDepositSequenceActive = false;
+	float CauldronCurseDepositSequenceRemainingTime = 0.0f;
 
 	UPROPERTY(Transient)
 	TArray<FWizardTrackedLooseSegment> LooseSnappedSegments;

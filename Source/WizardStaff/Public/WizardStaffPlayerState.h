@@ -14,7 +14,7 @@ public:
 
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
-	void SetWizardPlayerMirror(
+	bool SetWizardPlayerMirror(
 		int32 NewDisplaySlot,
 		int32 NewColorIndex,
 		int32 NewRoundWins,
@@ -52,7 +52,22 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Wizard Staff|Online Scaffold")
 	FString GetWizardSummaryText() const { return WizardSummaryText; }
 
+	void SendAuthoritativeSteamMatchResultToOwner(
+		int32 MatchGeneration,
+		int32 PlayerSlot,
+		int32 WinnerSlot,
+		int32 FinalGrandWizardFavor,
+		int32 FinalRoundWins);
+
 protected:
+	UFUNCTION(Client, Reliable)
+	void ClientSubmitAuthoritativeSteamMatchResult(
+		int32 MatchGeneration,
+		int32 PlayerSlot,
+		int32 WinnerSlot,
+		int32 FinalGrandWizardFavor,
+		int32 FinalRoundWins);
+
 	UFUNCTION()
 	void OnRep_WizardDisplaySlot();
 

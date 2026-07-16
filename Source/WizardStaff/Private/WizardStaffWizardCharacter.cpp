@@ -22,6 +22,7 @@
 #include "Sound/SoundBase.h"
 #include "UObject/ConstructorHelpers.h"
 #include "WizardStaffArcanePinballProjectile.h"
+#include "WizardStaffCauldronIngredient.h"
 #include "WizardStaffComponent.h"
 #include "WizardStaffGameMode.h"
 #include "WizardStaffGameState.h"
@@ -29,6 +30,19 @@
 #include "WizardStaffPlayerState.h"
 #include "WizardStaffPartyHall.h"
 #include "WizardStaffPlaytestBotComponent.h"
+
+namespace
+{
+constexpr float StaffSnapCueDurationSeconds = 0.85f;
+constexpr float StaffSnapCuePitchDegrees = 16.0f;
+constexpr float StaffSnapCueRollDegrees = 14.0f;
+constexpr float ServerFacingYawMaxBurstDegrees = 30.0f;
+constexpr float ServerFacingYawMaxInputScale = 2.0f;
+constexpr float NetworkStaffClashMashMinIntervalSeconds = 0.04f;
+constexpr int32 NetworkStaffClashMashCountLimit = 1000;
+constexpr float CauldronStickyTetherSlackDistance = 75.0f;
+constexpr float CauldronStickyTetherBreakDistance = 340.0f;
+}
 
 AWizardStaffWizardCharacter::AWizardStaffWizardCharacter()
 {
@@ -127,6 +141,25 @@ AWizardStaffWizardCharacter::AWizardStaffWizardCharacter()
 	StaffRoot->SetupAttachment(GetCapsuleComponent());
 	StaffRoot->SetRelativeLocation(FVector(12.0f, 42.0f, 24.0f));
 
+	CauldronCurseOrbMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("CauldronCurseOrbMesh"));
+	CauldronCurseOrbMesh->SetupAttachment(StaffRoot);
+	CauldronCurseOrbMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	CauldronCurseOrbMesh->SetGenerateOverlapEvents(false);
+	CauldronCurseOrbMesh->SetRelativeLocation(FVector(0.0f, 0.0f, 135.0f));
+	CauldronCurseOrbMesh->SetRelativeScale3D(FVector(0.58f));
+	CauldronCurseOrbMesh->SetHiddenInGame(true);
+	CauldronCurseOrbMesh->SetVisibility(false);
+	for (int32 AuraIndex = 0; AuraIndex < 6; ++AuraIndex)
+	{
+		UStaticMeshComponent* AuraMesh = CreateDefaultSubobject<UStaticMeshComponent>(*FString::Printf(TEXT("CauldronCurseAura_%02d"), AuraIndex));
+		AuraMesh->SetupAttachment(GetCapsuleComponent());
+		AuraMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		AuraMesh->SetGenerateOverlapEvents(false);
+		AuraMesh->SetHiddenInGame(true);
+		AuraMesh->SetVisibility(false);
+		CauldronCurseAuraMeshes.Add(AuraMesh);
+	}
+
 	StaffComponent = CreateDefaultSubobject<UWizardStaffComponent>(TEXT("StaffComponent"));
 	PlaytestBotComponent = CreateDefaultSubobject<UWizardStaffPlaytestBotComponent>(TEXT("PlaytestBotComponent"));
 	ArcanePinballProjectileClass = AWizardStaffArcanePinballProjectile::StaticClass();
@@ -144,6 +177,14 @@ AWizardStaffWizardCharacter::AWizardStaffWizardCharacter()
 	if (SphereMesh.Succeeded())
 	{
 		FaceMesh->SetStaticMesh(SphereMesh.Object);
+		CauldronCurseOrbMesh->SetStaticMesh(SphereMesh.Object);
+		for (UStaticMeshComponent* AuraMesh : CauldronCurseAuraMeshes)
+		{
+			if (AuraMesh)
+			{
+				AuraMesh->SetStaticMesh(SphereMesh.Object);
+			}
+		}
 	}
 	if (ConeMesh.Succeeded())
 	{
@@ -162,6 +203,14 @@ AWizardStaffWizardCharacter::AWizardStaffWizardCharacter()
 
 	if (BasicMaterial.Succeeded())
 	{
+		CauldronCurseOrbMesh->SetMaterial(0, BasicMaterial.Object);
+		for (UStaticMeshComponent* AuraMesh : CauldronCurseAuraMeshes)
+		{
+			if (AuraMesh)
+			{
+				AuraMesh->SetMaterial(0, BasicMaterial.Object);
+			}
+		}
 		RobeMesh->SetMaterial(0, BasicMaterial.Object);
 		HatMesh->SetMaterial(0, BasicMaterial.Object);
 		FaceMesh->SetMaterial(0, BasicMaterial.Object);
@@ -171,6 +220,21 @@ AWizardStaffWizardCharacter::AWizardStaffWizardCharacter()
 		SpellbookGlowMesh->SetMaterial(0, BasicMaterial.Object);
 		BroomHandleMesh->SetMaterial(0, BasicMaterial.Object);
 		BroomBristleMesh->SetMaterial(0, BasicMaterial.Object);
+	}
+
+	CauldronStickyTetherMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("CauldronStickyTetherMesh"));
+	CauldronStickyTetherMesh->SetupAttachment(GetCapsuleComponent());
+	CauldronStickyTetherMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	CauldronStickyTetherMesh->SetGenerateOverlapEvents(false);
+	CauldronStickyTetherMesh->SetHiddenInGame(true);
+	CauldronStickyTetherMesh->SetVisibility(false);
+	if (CylinderMesh.Succeeded())
+	{
+		CauldronStickyTetherMesh->SetStaticMesh(CylinderMesh.Object);
+	}
+	if (BasicMaterial.Succeeded())
+	{
+		CauldronStickyTetherMesh->SetMaterial(0, BasicMaterial.Object);
 	}
 }
 
@@ -265,6 +329,8 @@ void AWizardStaffWizardCharacter::BeginPlay()
 	GetCharacterMovement()->MaxAcceleration = MaxAcceleration;
 	GetCharacterMovement()->BrakingDecelerationWalking = BrakingDecelerationWalking;
 	GetCharacterMovement()->JumpZVelocity = HopVelocity;
+	DefaultCauldronGroundFriction = GetCharacterMovement()->GroundFriction;
+	DefaultCauldronRotationRateYaw = GetCharacterMovement()->RotationRate.Yaw;
 	ManaSlosh = FMath::Clamp(ManaSlosh, 0.0f, ManaTuning.MaxSlosh);
 	if (StaffComponent)
 	{
@@ -332,6 +398,37 @@ void AWizardStaffWizardCharacter::BeginPlay()
 		BroomBristleMaterialInstance->SetVectorParameterValue(TEXT("Color"), BristleColor);
 		BroomBristleMaterialInstance->SetVectorParameterValue(TEXT("BaseColor"), BristleColor);
 	}
+	if (CauldronCurseOrbMesh)
+	{
+		CauldronCurseOrbMaterialInstance = CauldronCurseOrbMesh->CreateAndSetMaterialInstanceDynamic(0);
+		if (CauldronCurseOrbMaterialInstance)
+		{
+			CauldronCurseOrbMaterialInstance->SetVectorParameterValue(TEXT("Color"), FLinearColor(1.0f, 0.08f, 0.01f));
+			CauldronCurseOrbMaterialInstance->SetVectorParameterValue(TEXT("BaseColor"), FLinearColor(1.0f, 0.08f, 0.01f));
+		}
+		OnRep_ReplicatedCauldronState();
+	}
+	for (UStaticMeshComponent* AuraMesh : CauldronCurseAuraMeshes)
+	{
+		if (AuraMesh)
+		{
+			if (UMaterialInstanceDynamic* AuraMaterial = AuraMesh->CreateAndSetMaterialInstanceDynamic(0))
+			{
+				AuraMaterial->SetVectorParameterValue(TEXT("Color"), FLinearColor(0.58f, 0.05f, 0.88f));
+				AuraMaterial->SetVectorParameterValue(TEXT("BaseColor"), FLinearColor(0.58f, 0.05f, 0.88f));
+			}
+		}
+	}
+	if (CauldronStickyTetherMesh)
+	{
+		CauldronStickyTetherMaterialInstance = CauldronStickyTetherMesh->CreateAndSetMaterialInstanceDynamic(0);
+		if (CauldronStickyTetherMaterialInstance)
+		{
+			CauldronStickyTetherMaterialInstance->SetVectorParameterValue(TEXT("Color"), FLinearColor(0.26f, 0.82f, 0.10f));
+			CauldronStickyTetherMaterialInstance->SetVectorParameterValue(TEXT("BaseColor"), FLinearColor(0.26f, 0.82f, 0.10f));
+		}
+		OnRep_ReplicatedCauldronStickyTether();
+	}
 	UpdateSpellbookVisual();
 	RefreshColorFromPlayerState();
 	if (HasAuthority())
@@ -341,6 +438,8 @@ void AWizardStaffWizardCharacter::BeginPlay()
 		SyncReplicatedStaffStressFromAuthority(true);
 		SyncReplicatedCarriedBrewRewardFromAuthority();
 		SyncReplicatedMegaStaffStateFromAuthority(true);
+		SetCauldronHazardMovementMultipliers(1.0f, 1.0f, 1.0f, 1.0f, 1.0f);
+		SetCauldronCurseState(false, 0.0f);
 	}
 	else
 	{
@@ -350,6 +449,7 @@ void AWizardStaffWizardCharacter::BeginPlay()
 
 void AWizardStaffWizardCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	ClearStaffSnapReadabilityCue(false);
 	if (StaffComponent)
 	{
 		StaffComponent->OnStaffSegmentSnapped.RemoveDynamic(this, &AWizardStaffWizardCharacter::HandleStaffSegmentSnapped);
@@ -368,6 +468,8 @@ void AWizardStaffWizardCharacter::Tick(float DeltaSeconds)
 	UpdateMegaStaffBrew(DeltaSeconds);
 	UpdateStaffClash(DeltaSeconds);
 	UpdateSloshMovementSettings();
+	UpdateCauldronCurseVisual(DeltaSeconds);
+	UpdateCauldronStickyTether(DeltaSeconds);
 	UpdateSloshVisuals(DeltaSeconds);
 	UpdateBonkVisual(DeltaSeconds);
 	UpdateBonkAttack(DeltaSeconds);
@@ -395,6 +497,10 @@ void AWizardStaffWizardCharacter::GetLifetimeReplicatedProps(TArray<FLifetimePro
 	DOREPLIFETIME(AWizardStaffWizardCharacter, ReplicatedMaxManaSlosh);
 	DOREPLIFETIME(AWizardStaffWizardCharacter, ReplicatedStaffStress);
 	DOREPLIFETIME(AWizardStaffWizardCharacter, ReplicatedMaxStaffStress);
+	DOREPLIFETIME(AWizardStaffWizardCharacter, ReplicatedLastSnapPlayerIndex);
+	DOREPLIFETIME(AWizardStaffWizardCharacter, ReplicatedLastSnapSegmentCountAfter);
+	DOREPLIFETIME(AWizardStaffWizardCharacter, bReplicatedLastSnapWasMegaTemporarySegment);
+	DOREPLIFETIME(AWizardStaffWizardCharacter, ReplicatedStaffSnapSequence);
 	DOREPLIFETIME(AWizardStaffWizardCharacter, ReplicatedCarriedBrewReward);
 	DOREPLIFETIME(AWizardStaffWizardCharacter, ReplicatedQuickBonkSequence);
 	DOREPLIFETIME(AWizardStaffWizardCharacter, ReplicatedQuickBonkVisualDuration);
@@ -413,6 +519,19 @@ void AWizardStaffWizardCharacter::GetLifetimeReplicatedProps(TArray<FLifetimePro
 	DOREPLIFETIME(AWizardStaffWizardCharacter, ReplicatedMegaStaffSequence);
 	DOREPLIFETIME(AWizardStaffWizardCharacter, bReplicatedBroomBoostActive);
 	DOREPLIFETIME(AWizardStaffWizardCharacter, bReplicatedPrototypeInputLocked);
+	DOREPLIFETIME(AWizardStaffWizardCharacter, bReplicatedCauldronCursed);
+	DOREPLIFETIME(AWizardStaffWizardCharacter, ReplicatedCauldronCurseRemainingTime);
+	DOREPLIFETIME(AWizardStaffWizardCharacter, bReplicatedCauldronStickyTethered);
+	DOREPLIFETIME(AWizardStaffWizardCharacter, ReplicatedCauldronStickyTetherAnchor);
+	DOREPLIFETIME(AWizardStaffWizardCharacter, ReplicatedCauldronCurseOrbRelativeLocation);
+	DOREPLIFETIME(AWizardStaffWizardCharacter, ReplicatedCauldronMovementMultipliers);
+	DOREPLIFETIME(AWizardStaffWizardCharacter, ReplicatedCauldronTurningMultiplier);
+	DOREPLIFETIME(AWizardStaffWizardCharacter, bReplicatedCauldronBanking);
+	DOREPLIFETIME(AWizardStaffWizardCharacter, ReplicatedCauldronBankingMovementMultipliers);
+	DOREPLIFETIME(AWizardStaffWizardCharacter, ReplicatedActiveCauldronVial);
+	DOREPLIFETIME(AWizardStaffWizardCharacter, ReplicatedCauldronVialCount);
+	DOREPLIFETIME(AWizardStaffWizardCharacter, ReplicatedCauldronVialEffectMultipliers);
+	DOREPLIFETIME(AWizardStaffWizardCharacter, ReplicatedCauldronVialInstabilityMultiplier);
 }
 
 void AWizardStaffWizardCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -522,9 +641,21 @@ FLinearColor AWizardStaffWizardCharacter::GetPrototypePlayerColor(int32 PlayerIn
 
 void AWizardStaffWizardCharacter::DrinkMug()
 {
+	const UWorld* World = GetWorld();
+	if (World && World->GetNetMode() != NM_Standalone)
+	{
+		UE_LOG(LogTemp, Verbose, TEXT("Ignoring direct DrinkMug input in network play; server-owned pickups grant mug rewards."));
+		return;
+	}
+
+	ApplyCollectedMugReward();
+}
+
+void AWizardStaffWizardCharacter::ApplyCollectedMugReward()
+{
 	if (!HasAuthority())
 	{
-		UE_LOG(LogTemp, Verbose, TEXT("Ignoring client-side DrinkMug request until mug pickup replication is implemented."));
+		UE_LOG(LogTemp, Verbose, TEXT("Ignoring mug reward grant outside authority."));
 		return;
 	}
 
@@ -596,11 +727,14 @@ void AWizardStaffWizardCharacter::ResetForNewMatch(bool bResetStaffSegments, boo
 	SyncReplicatedOutOfArenaRespawnStateFromAuthority(false, 0.0f, true);
 	ClearCarriedBrewReward();
 	ClearMegaStaffBrew(!bResetStaffSegments);
+	SetCauldronHazardMovementMultipliers(1.0f, 1.0f, 1.0f, 1.0f, 1.0f);
+	SetCauldronCurseState(false, 0.0f);
 
 	if (StaffComponent)
 	{
 		StaffComponent->ResetForNewMatch(bResetStaffSegments);
 	}
+	ClearStaffSnapReadabilityCue(true);
 
 	if (UCharacterMovementComponent* MovementComponent = GetCharacterMovement())
 	{
@@ -797,6 +931,68 @@ void AWizardStaffWizardCharacter::SyncReplicatedStaffStressFromAuthority(bool bF
 	ForceNetUpdate();
 }
 
+void AWizardStaffWizardCharacter::SyncReplicatedStaffSnapCueFromAuthority(int32 SegmentCountAfter, bool bWasMegaTemporarySegment)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (World && World->GetNetMode() == NM_Standalone)
+	{
+		return;
+	}
+
+	const int32 SafeSegmentCountAfter = FMath::Max(SegmentCountAfter, 0);
+	int32 PlayerIndex = GetDebugPlayerIndex();
+	if (World)
+	{
+		if (const AWizardStaffGameMode* GameMode = World->GetAuthGameMode<AWizardStaffGameMode>())
+		{
+			const int32 GameModePlayerIndex = GameMode->GetPlayerIndexForWizard(this);
+			if (GameModePlayerIndex != INDEX_NONE)
+			{
+				PlayerIndex = GameModePlayerIndex;
+			}
+		}
+	}
+
+	ReplicatedLastSnapPlayerIndex = PlayerIndex;
+	ReplicatedLastSnapSegmentCountAfter = SafeSegmentCountAfter;
+	bReplicatedLastSnapWasMegaTemporarySegment = bWasMegaTemporarySegment;
+	++ReplicatedStaffSnapSequence;
+	LastProcessedStaffSnapSequence = ReplicatedStaffSnapSequence;
+
+	StartStaffSnapReadabilityCue(SafeSegmentCountAfter, bWasMegaTemporarySegment);
+	ForceNetUpdate();
+}
+
+void AWizardStaffWizardCharacter::StartStaffSnapReadabilityCue(int32 SegmentCountAfter, bool bWasMegaTemporarySegment)
+{
+	(void)SegmentCountAfter;
+	StaffSnapCueTimeRemaining = StaffSnapCueDurationSeconds;
+	bLastStaffSnapCueWasMegaTemporarySegment = bWasMegaTemporarySegment;
+}
+
+void AWizardStaffWizardCharacter::ClearStaffSnapReadabilityCue(bool bClearReplicated)
+{
+	StaffSnapCueTimeRemaining = 0.0f;
+	bLastStaffSnapCueWasMegaTemporarySegment = false;
+
+	if (!bClearReplicated || !HasAuthority())
+	{
+		return;
+	}
+
+	ReplicatedLastSnapPlayerIndex = INDEX_NONE;
+	ReplicatedLastSnapSegmentCountAfter = StaffComponent ? StaffComponent->GetSegmentCount() : 0;
+	bReplicatedLastSnapWasMegaTemporarySegment = false;
+	++ReplicatedStaffSnapSequence;
+	LastProcessedStaffSnapSequence = ReplicatedStaffSnapSequence;
+	ForceNetUpdate();
+}
+
 void AWizardStaffWizardCharacter::SyncReplicatedCarriedBrewRewardFromAuthority()
 {
 	if (!HasAuthority())
@@ -928,6 +1124,10 @@ void AWizardStaffWizardCharacter::QuickBonk()
 			{
 				HandleQuickBonkRequestOnServer();
 			}
+			else if (bStaffClashActive)
+			{
+				ServerRequestStaffClashMash();
+			}
 			else
 			{
 				ServerRequestQuickBonk();
@@ -966,6 +1166,11 @@ void AWizardStaffWizardCharacter::ServerRequestQuickBonk_Implementation()
 	HandleQuickBonkRequestOnServer();
 }
 
+void AWizardStaffWizardCharacter::ServerRequestStaffClashMash_Implementation()
+{
+	HandleStaffClashMashRequestOnServer();
+}
+
 void AWizardStaffWizardCharacter::HandleQuickBonkRequestOnServer()
 {
 	if (!HasAuthority())
@@ -1001,6 +1206,23 @@ void AWizardStaffWizardCharacter::HandleQuickBonkRequestOnServer()
 	StartQuickBonkOnAuthority();
 }
 
+void AWizardStaffWizardCharacter::HandleStaffClashMashRequestOnServer()
+{
+	if (!HasAuthority() || bPrototypeInputLocked || !bStaffClashActive)
+	{
+		return;
+	}
+
+	AController* OwningController = GetController();
+	if (!OwningController || OwningController->GetPawn() != this)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Rejected Staff Clash mash for Wizard %d: wizard is not possessed by its controller."), GetDebugPlayerIndex() + 1);
+		return;
+	}
+
+	RegisterStaffClashMash();
+}
+
 bool AWizardStaffWizardCharacter::StartQuickBonkOnAuthority()
 {
 	if (!HasAuthority() || bPrototypeInputLocked || !CanQuickBonk())
@@ -1014,7 +1236,9 @@ bool AWizardStaffWizardCharacter::StartQuickBonkOnAuthority()
 	QuickBonkImpactTimeRemaining = ImpactDelay;
 	QuickBonkHitCountThisSwing = 0;
 	QuickBonkHitWizardsThisSwing.Reset();
+	QuickBonkHitIngredientsThisSwing.Reset();
 	bQuickBonkHitResolved = false;
+	++AuthoritativeQuickBonkSequence;
 
 	if (UWorld* MutableWorld = GetWorld())
 	{
@@ -1070,6 +1294,7 @@ void AWizardStaffWizardCharacter::CancelMovementStateForRespawn()
 {
 	CancelQuickBonkStateForReset();
 	CancelStaffClashStateForReset();
+	ClearStaffSnapReadabilityCue(true);
 	EndBroomBoost();
 	BroomBoostLandingCooldownRemaining = 0.0f;
 	bBroomBoostAvailable = true;
@@ -1083,6 +1308,7 @@ void AWizardStaffWizardCharacter::ClearQuickBonkState(bool bSyncReplicatedCancel
 	QuickBonkImpactTimeRemaining = 0.0f;
 	QuickBonkHitCountThisSwing = 0;
 	QuickBonkHitWizardsThisSwing.Reset();
+	QuickBonkHitIngredientsThisSwing.Reset();
 	bQuickBonkHitResolved = true;
 
 	if (StaffRoot)
@@ -1566,14 +1792,20 @@ void AWizardStaffWizardCharacter::SetPrototypeInputLocked(bool bNewLocked)
 		ForceNetUpdate();
 	}
 
+	UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
 	if (!bPrototypeInputLocked)
 	{
+		if (MovementComponent && MovementComponent->MovementMode == MOVE_None)
+		{
+			MovementComponent->SetMovementMode(MOVE_Walking);
+		}
 		return;
 	}
 
-	if (UCharacterMovementComponent* MovementComponent = GetCharacterMovement())
+	if (MovementComponent)
 	{
 		MovementComponent->StopMovementImmediately();
+		MovementComponent->DisableMovement();
 	}
 	BroomBoostTimeRemaining = 0.0f;
 	bBroomBoostActive = false;
@@ -1615,7 +1847,11 @@ float AWizardStaffWizardCharacter::GetQuickBonkKnockbackStrength() const
 	const float SegmentKnockbackBonus = static_cast<float>(GetStaffSegmentCount()) * BonkTuning.KnockbackPerStaffSegment;
 	const float ScaledKnockback = BonkTuning.KnockbackStrength + SloshKnockbackBonus + SegmentKnockbackBonus;
 	const float ClampedKnockback = BonkTuning.MaxKnockbackStrength > 0.0f ? FMath::Min(ScaledKnockback, BonkTuning.MaxKnockbackStrength) : ScaledKnockback;
-	return ClampedKnockback * GetPartyHallBonkMultiplier() * GetMegaStaffKnockbackMultiplier();
+	const AWizardStaffGameMode* GameMode = GetWorld() ? GetWorld()->GetAuthGameMode<AWizardStaffGameMode>() : nullptr;
+	const float CauldronVialMultiplier = GameMode && GameMode->IsCauldronCatastropheTrialActive()
+		? ReplicatedCauldronVialEffectMultipliers.Z
+		: 1.0f;
+	return ClampedKnockback * GetPartyHallBonkMultiplier() * GetMegaStaffKnockbackMultiplier() * CauldronVialMultiplier;
 }
 
 float AWizardStaffWizardCharacter::GetQuickBonkCooldown() const
@@ -1637,7 +1873,7 @@ float AWizardStaffWizardCharacter::GetQuickBonkVisualDuration() const
 
 bool AWizardStaffWizardCharacter::CanQuickBonk() const
 {
-	if (bStaffClashActive)
+	if (bStaffClashActive || bReplicatedCauldronBanking)
 	{
 		return false;
 	}
@@ -2116,11 +2352,53 @@ void AWizardStaffWizardCharacter::Turn(float Value)
 
 void AWizardStaffWizardCharacter::ServerSetFacingYaw_Implementation(float NewYaw)
 {
+	if (!HasAuthority() || !FMath::IsFinite(NewYaw) || bPrototypeInputLocked || bStaffClashActive)
+	{
+		return;
+	}
+
+	AController* OwningController = GetController();
+	if (!OwningController || OwningController->GetPawn() != this)
+	{
+		return;
+	}
+
+	const UWorld* World = GetWorld();
+	const float Now = World ? World->GetTimeSeconds() : 0.0f;
+	if (ServerFacingYawLastUpdateTime < 0.0f)
+	{
+		ServerFacingYawLastUpdateTime = Now;
+		ServerFacingYawTurnAllowanceDegrees = ServerFacingYawMaxBurstDegrees;
+	}
+	else
+	{
+		const float Elapsed = FMath::Max(Now - ServerFacingYawLastUpdateTime, 0.0f);
+		const float StaffControlMultiplier = StaffComponent ? StaffComponent->GetControlInputMultiplier() : 1.0f;
+		const float AllowedTurnRate = FMath::Max(
+			TurnRateDegreesPerSecond
+				* ServerFacingYawMaxInputScale
+				* StaffControlMultiplier
+				* GetManaSloshTurnMultiplier()
+				* GetHitReactionInputMultiplier()
+				* GetStaffHeftTurnMultiplier(),
+			0.0f);
+		ServerFacingYawTurnAllowanceDegrees = FMath::Min(
+			ServerFacingYawMaxBurstDegrees,
+			ServerFacingYawTurnAllowanceDegrees + (AllowedTurnRate * Elapsed));
+		ServerFacingYawLastUpdateTime = Now;
+	}
+
 	FRotator NewRotation = GetActorRotation();
 	NewRotation.Pitch = 0.0f;
-	NewRotation.Yaw = FRotator::NormalizeAxis(NewYaw);
+	const float RequestedDelta = FMath::FindDeltaAngleDegrees(NewRotation.Yaw, FRotator::NormalizeAxis(NewYaw));
+	const float AppliedDelta = FMath::Clamp(
+		RequestedDelta,
+		-ServerFacingYawTurnAllowanceDegrees,
+		ServerFacingYawTurnAllowanceDegrees);
+	NewRotation.Yaw = FRotator::NormalizeAxis(NewRotation.Yaw + AppliedDelta);
 	NewRotation.Roll = 0.0f;
 	SetActorRotation(NewRotation);
+	ServerFacingYawTurnAllowanceDegrees = FMath::Max(0.0f, ServerFacingYawTurnAllowanceDegrees - FMath::Abs(AppliedDelta));
 }
 
 void AWizardStaffWizardCharacter::OnRep_ReplicatedStaffSegmentCount()
@@ -2140,6 +2418,27 @@ void AWizardStaffWizardCharacter::OnRep_ReplicatedStaffStress()
 	ReplicatedStaffStress = FMath::Clamp(ReplicatedStaffStress, 0.0f, ReplicatedMaxStaffStress);
 }
 
+void AWizardStaffWizardCharacter::OnRep_ReplicatedStaffSnapSequence()
+{
+	if (HasAuthority() || ReplicatedStaffSnapSequence <= 0 || ReplicatedStaffSnapSequence == LastProcessedStaffSnapSequence)
+	{
+		return;
+	}
+
+	LastProcessedStaffSnapSequence = ReplicatedStaffSnapSequence;
+	if (ReplicatedLastSnapPlayerIndex == INDEX_NONE)
+	{
+		StaffSnapCueTimeRemaining = 0.0f;
+		bLastStaffSnapCueWasMegaTemporarySegment = false;
+		return;
+	}
+
+	RebuildStaffVisualsFromReplicatedSegmentCount();
+	StartStaffSnapReadabilityCue(
+		ReplicatedLastSnapSegmentCountAfter,
+		bReplicatedLastSnapWasMegaTemporarySegment);
+}
+
 void AWizardStaffWizardCharacter::OnRep_ReplicatedCarriedBrewReward()
 {
 	UpdateSpellbookVisual();
@@ -2156,6 +2455,7 @@ void AWizardStaffWizardCharacter::OnRep_ReplicatedQuickBonkSequence()
 	QuickBonkImpactTimeRemaining = 0.0f;
 	QuickBonkHitCountThisSwing = 0;
 	QuickBonkHitWizardsThisSwing.Reset();
+	QuickBonkHitIngredientsThisSwing.Reset();
 	bQuickBonkHitResolved = true;
 }
 
@@ -2178,6 +2478,7 @@ void AWizardStaffWizardCharacter::OnRep_ReplicatedOutOfArenaRespawnState()
 	if (bReplicatedOutOfArenaRespawning)
 	{
 		ClearQuickBonkState(false);
+		ClearStaffSnapReadabilityCue(false);
 	}
 }
 
@@ -2207,6 +2508,7 @@ void AWizardStaffWizardCharacter::OnRep_ReplicatedStaffClashState()
 	QuickBonkVisualTimeRemaining = 0.0f;
 	QuickBonkHitCountThisSwing = 0;
 	QuickBonkHitWizardsThisSwing.Reset();
+	QuickBonkHitIngredientsThisSwing.Reset();
 	EndBroomBoost();
 	StopJumping();
 	LockStaffClashPosition();
@@ -2252,6 +2554,13 @@ void AWizardStaffWizardCharacter::OnRep_ReplicatedPrototypeInputLocked()
 	bPrototypeInputLocked = bReplicatedPrototypeInputLocked;
 	if (!bPrototypeInputLocked)
 	{
+		if (UCharacterMovementComponent* MovementComponent = GetCharacterMovement())
+		{
+			if (MovementComponent->MovementMode == MOVE_None)
+			{
+				MovementComponent->SetMovementMode(MOVE_Walking);
+			}
+		}
 		return;
 	}
 
@@ -2263,6 +2572,7 @@ void AWizardStaffWizardCharacter::OnRep_ReplicatedPrototypeInputLocked()
 		if (UCharacterMovementComponent* MovementComponent = GetCharacterMovement())
 		{
 			MovementComponent->StopMovementImmediately();
+			MovementComponent->DisableMovement();
 		}
 	}
 }
@@ -2768,10 +3078,485 @@ void AWizardStaffWizardCharacter::UpdateSloshMovementSettings()
 		return;
 	}
 
-	MoveComp->MaxWalkSpeed = WalkSpeed;
-	MoveComp->MaxAcceleration = MaxAcceleration * GetManaSloshAccelerationMultiplier();
-	MoveComp->BrakingDecelerationWalking = BrakingDecelerationWalking * GetManaSloshBrakingMultiplier();
+	MoveComp->MaxWalkSpeed = WalkSpeed * ReplicatedCauldronMovementMultipliers.Z * ReplicatedCauldronVialEffectMultipliers.X * ReplicatedCauldronBankingMovementMultipliers.X;
+	MoveComp->MaxAcceleration = MaxAcceleration * GetManaSloshAccelerationMultiplier() * ReplicatedCauldronMovementMultipliers.W * ReplicatedCauldronVialEffectMultipliers.Y * ReplicatedCauldronBankingMovementMultipliers.Y;
+	MoveComp->BrakingDecelerationWalking = BrakingDecelerationWalking * GetManaSloshBrakingMultiplier() * ReplicatedCauldronMovementMultipliers.Y;
+	MoveComp->GroundFriction = DefaultCauldronGroundFriction * ReplicatedCauldronMovementMultipliers.X;
+	MoveComp->RotationRate.Yaw = DefaultCauldronRotationRateYaw * ReplicatedCauldronTurningMultiplier;
 	MoveComp->JumpZVelocity = HopVelocity;
+}
+
+void AWizardStaffWizardCharacter::SetCauldronHazardMovementMultipliers(float FrictionMultiplier, float BrakingMultiplier, float SpeedMultiplier, float AccelerationMultiplier, float TurningMultiplier)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	const FVector4 SafeMultipliers(
+		FMath::Clamp(FrictionMultiplier, 0.05f, 1.0f),
+		FMath::Clamp(BrakingMultiplier, 0.05f, 1.0f),
+		FMath::Clamp(SpeedMultiplier, 0.05f, 1.0f),
+		FMath::Clamp(AccelerationMultiplier, 0.05f, 1.0f));
+	const float SafeTurningMultiplier = FMath::Clamp(TurningMultiplier, 0.05f, 1.0f);
+	if (ReplicatedCauldronMovementMultipliers == SafeMultipliers && FMath::IsNearlyEqual(ReplicatedCauldronTurningMultiplier, SafeTurningMultiplier))
+	{
+		return;
+	}
+	ReplicatedCauldronMovementMultipliers = SafeMultipliers;
+	ReplicatedCauldronTurningMultiplier = SafeTurningMultiplier;
+	UpdateSloshMovementSettings();
+	ForceNetUpdate();
+}
+
+void AWizardStaffWizardCharacter::SetCauldronBankingMovementMultipliers(bool bBanking, float SpeedMultiplier, float AccelerationMultiplier)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	const FVector2D SafeMultipliers(
+		FMath::Clamp(SpeedMultiplier, 0.05f, 1.0f),
+		FMath::Clamp(AccelerationMultiplier, 0.05f, 1.0f));
+	if (bReplicatedCauldronBanking == bBanking && ReplicatedCauldronBankingMovementMultipliers.Equals(SafeMultipliers))
+	{
+		return;
+	}
+
+	bReplicatedCauldronBanking = bBanking;
+	ReplicatedCauldronBankingMovementMultipliers = SafeMultipliers;
+	UpdateSloshMovementSettings();
+	ForceNetUpdate();
+}
+
+void AWizardStaffWizardCharacter::SetCauldronVialEffectState(EWizardCauldronVialType ActiveVial, int32 VialCount, float SpeedMultiplier, float AccelerationMultiplier, float BonkKnockbackMultiplier, float InstabilityMultiplier)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	const FVector SafeMultipliers(
+		FMath::Max(SpeedMultiplier, 0.05f),
+		FMath::Max(AccelerationMultiplier, 0.05f),
+		FMath::Max(BonkKnockbackMultiplier, 0.05f));
+	const int32 SafeVialCount = FMath::Max(VialCount, 0);
+	const float SafeInstabilityMultiplier = FMath::Max(InstabilityMultiplier, 1.0f);
+	if (ReplicatedActiveCauldronVial == ActiveVial && ReplicatedCauldronVialCount == SafeVialCount && ReplicatedCauldronVialEffectMultipliers.Equals(SafeMultipliers) && FMath::IsNearlyEqual(ReplicatedCauldronVialInstabilityMultiplier, SafeInstabilityMultiplier))
+	{
+		return;
+	}
+
+	ReplicatedActiveCauldronVial = ActiveVial;
+	ReplicatedCauldronVialCount = SafeVialCount;
+	ReplicatedCauldronVialEffectMultipliers = SafeMultipliers;
+	ReplicatedCauldronVialInstabilityMultiplier = SafeInstabilityMultiplier;
+	UpdateSloshMovementSettings();
+	ForceNetUpdate();
+}
+
+bool AWizardStaffWizardCharacter::ApplyCauldronVialInstabilityStress(float InstabilityMultiplier, float& OutBaseStress, float& OutFinalStress)
+{
+	OutBaseStress = 0.0f;
+	OutFinalStress = 0.0f;
+	if (!HasAuthority() || !StaffComponent)
+	{
+		return false;
+	}
+
+	const AWizardStaffGameMode* GameMode = GetWorld() ? GetWorld()->GetAuthGameMode<AWizardStaffGameMode>() : nullptr;
+	if (GameMode && GameMode->ShouldDisablePartyHallBonkStress())
+	{
+		return false;
+	}
+
+	const float SafeInstabilityMultiplier = FMath::Max(InstabilityMultiplier, 1.0f);
+	OutBaseStress = StaffComponent->StressTuning.StressGainedPerBonk * BonkTuning.HitStressMultiplier;
+	OutFinalStress = OutBaseStress * StaffComponent->GetStressMultiplier() * GetStaffStressEffectMultiplier() * SafeInstabilityMultiplier;
+	const bool bSnapped = StaffComponent->AddStaffStress(OutBaseStress * SafeInstabilityMultiplier, TEXT("CauldronVialInstability"));
+	PlayBonkStressFeedback(OutFinalStress, bSnapped, 1);
+	return true;
+}
+
+void AWizardStaffWizardCharacter::TriggerCauldronSlipperySkid(float SloshAlpha, float Duration, float MinimumImpulse, float MaximumImpulse)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	UCharacterMovementComponent* MoveComp = GetCharacterMovement();
+	if (!MoveComp || !MoveComp->IsMovingOnGround())
+	{
+		return;
+	}
+
+	FVector HorizontalVelocity(MoveComp->Velocity.X, MoveComp->Velocity.Y, 0.0f);
+	FVector TravelDirection = HorizontalVelocity.SizeSquared() >= FMath::Square(60.0f) ? HorizontalVelocity.GetSafeNormal2D() : GetActorForwardVector().GetSafeNormal2D();
+	if (TravelDirection.IsNearlyZero())
+	{
+		return;
+	}
+
+	if (CauldronSlipperySkidRemainingTime <= 0.0f)
+	{
+		CauldronSlipperySkidDirection = TravelDirection;
+		const float Impulse = FMath::Lerp(FMath::Max(MinimumImpulse, 0.0f), FMath::Max(MaximumImpulse, MinimumImpulse), FMath::Clamp(SloshAlpha, 0.0f, 1.0f));
+		MoveComp->Velocity += CauldronSlipperySkidDirection * Impulse;
+	}
+
+	CauldronSlipperySkidRemainingTime = FMath::Max(CauldronSlipperySkidRemainingTime, FMath::Max(Duration, 0.0f));
+}
+
+bool AWizardStaffWizardCharacter::UpdateCauldronSlipperySkid(float DeltaSeconds)
+{
+	if (!HasAuthority() || CauldronSlipperySkidRemainingTime <= 0.0f)
+	{
+		return false;
+	}
+
+	CauldronSlipperySkidRemainingTime = FMath::Max(CauldronSlipperySkidRemainingTime - FMath::Max(DeltaSeconds, 0.0f), 0.0f);
+	if (CauldronSlipperySkidRemainingTime <= 0.0f)
+	{
+		CauldronSlipperySkidDirection = FVector::ZeroVector;
+		return false;
+	}
+
+	return true;
+}
+
+void AWizardStaffWizardCharacter::ApplyCauldronSlipperyGlide(float DeltaSeconds, float Acceleration)
+{
+	if (!HasAuthority() || DeltaSeconds <= 0.0f || CauldronSlipperySkidDirection.IsNearlyZero())
+	{
+		return;
+	}
+
+	UCharacterMovementComponent* MoveComp = GetCharacterMovement();
+	if (!MoveComp || !MoveComp->IsMovingOnGround())
+	{
+		return;
+	}
+
+	MoveComp->Velocity += CauldronSlipperySkidDirection * FMath::Max(Acceleration, 0.0f) * DeltaSeconds;
+}
+
+void AWizardStaffWizardCharacter::ClearCauldronSlipperySkid()
+{
+	CauldronSlipperySkidRemainingTime = 0.0f;
+	CauldronSlipperySkidDirection = FVector::ZeroVector;
+}
+
+void AWizardStaffWizardCharacter::ApplyCauldronStickyTetherReel(float DeltaSeconds)
+{
+	if (!HasAuthority() || !bReplicatedCauldronStickyTethered || bBroomBoostActive || DeltaSeconds <= 0.0f)
+	{
+		return;
+	}
+
+	FVector ToAnchor = ReplicatedCauldronStickyTetherAnchor - GetActorLocation();
+	ToAnchor.Z = 0.0f;
+	const float Distance = ToAnchor.Size();
+	if (Distance <= CauldronStickyTetherSlackDistance || !ToAnchor.Normalize())
+	{
+		return;
+	}
+
+	const float ReelSpeed = FMath::Clamp((Distance - CauldronStickyTetherSlackDistance) * 0.55f, 28.0f, 115.0f);
+	SetActorLocation(GetActorLocation() + (ToAnchor * ReelSpeed * DeltaSeconds), true);
+}
+
+void AWizardStaffWizardCharacter::SetCauldronStickyTetherState(bool bNewTethered, const FVector& AnchorLocation)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	const FVector SafeAnchor = bNewTethered ? AnchorLocation : FVector::ZeroVector;
+	if (bReplicatedCauldronStickyTethered == bNewTethered && ReplicatedCauldronStickyTetherAnchor.Equals(SafeAnchor, 1.0f))
+	{
+		return;
+	}
+
+	bReplicatedCauldronStickyTethered = bNewTethered;
+	ReplicatedCauldronStickyTetherAnchor = SafeAnchor;
+	UpdateCauldronStickyTetherVisual();
+	ForceNetUpdate();
+}
+
+void AWizardStaffWizardCharacter::SetCauldronCurseState(bool bCursed, float RemainingTime)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	const float SafeRemainingTime = bCursed ? FMath::GridSnap(FMath::Max(RemainingTime, 0.0f), 0.1f) : 0.0f;
+	if (bReplicatedCauldronCursed == bCursed && FMath::IsNearlyEqual(ReplicatedCauldronCurseRemainingTime, SafeRemainingTime))
+	{
+		if (!bCursed)
+		{
+			// Reset paths may repeat a clear after a visual attachment changed locally.
+			// Re-applying the readable state makes the stale orb/aura harmless.
+			OnRep_ReplicatedCauldronState();
+		}
+		return;
+	}
+	bReplicatedCauldronCursed = bCursed;
+	ReplicatedCauldronCurseRemainingTime = SafeRemainingTime;
+	if (bCursed)
+	{
+		bCauldronCurseOrbAttachedToLooseSegment = false;
+		AttachCauldronCurseOrbToTopStaffSegment();
+	}
+	OnRep_ReplicatedCauldronState();
+	ForceNetUpdate();
+}
+
+void AWizardStaffWizardCharacter::SetCauldronCurseVisualRelativeLocation(const FVector& RelativeLocation)
+{
+	if (HasAuthority() && CauldronCurseOrbMesh)
+	{
+		ReplicatedCauldronCurseOrbRelativeLocation = RelativeLocation;
+		OnRep_ReplicatedCauldronState();
+		ForceNetUpdate();
+	}
+}
+
+void AWizardStaffWizardCharacter::AttachCauldronCurseOrbToLooseSegment(AActor* LooseSegment)
+{
+	if (!CauldronCurseOrbMesh || !IsValid(LooseSegment) || !LooseSegment->GetRootComponent())
+	{
+		return;
+	}
+
+	CauldronCurseOrbMesh->AttachToComponent(LooseSegment->GetRootComponent(), FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+	CauldronCurseOrbMesh->SetRelativeLocation(FVector(0.0f, 0.0f, 62.0f));
+	CauldronCurseOrbMesh->SetHiddenInGame(false);
+	CauldronCurseOrbMesh->SetVisibility(true);
+	bCauldronCurseOrbAttachedToLooseSegment = true;
+}
+
+void AWizardStaffWizardCharacter::DetachCauldronCurseOrbAtWorldLocation(const FVector& WorldLocation)
+{
+	if (!CauldronCurseOrbMesh)
+	{
+		return;
+	}
+
+	CauldronCurseOrbMesh->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
+	CauldronCurseOrbMesh->SetWorldLocation(WorldLocation);
+	CauldronCurseOrbMesh->SetHiddenInGame(false);
+	CauldronCurseOrbMesh->SetVisibility(true);
+	bCauldronCurseOrbAttachedToLooseSegment = true;
+}
+
+void AWizardStaffWizardCharacter::ClearCauldronCurseOrbLooseSegmentAttachment()
+{
+	if (!CauldronCurseOrbMesh || !StaffRoot)
+	{
+		return;
+	}
+
+	CauldronCurseOrbMesh->AttachToComponent(StaffRoot, FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+	CauldronCurseOrbMesh->SetRelativeLocation(ReplicatedCauldronCurseOrbRelativeLocation);
+	bCauldronCurseOrbAttachedToLooseSegment = false;
+}
+
+void AWizardStaffWizardCharacter::RefreshCauldronCurseOrbAttachment()
+{
+	if (bReplicatedCauldronCursed && !bCauldronCurseOrbAttachedToLooseSegment)
+	{
+		AttachCauldronCurseOrbToTopStaffSegment();
+	}
+}
+
+FVector AWizardStaffWizardCharacter::GetCauldronCurseOrbWorldLocation() const
+{
+	return CauldronCurseOrbMesh ? CauldronCurseOrbMesh->GetComponentLocation() : GetActorLocation();
+}
+
+void AWizardStaffWizardCharacter::OnRep_ReplicatedCauldronState()
+{
+	if (!CauldronCurseOrbMesh)
+	{
+		return;
+	}
+	CauldronCurseOrbMesh->SetHiddenInGame(!bReplicatedCauldronCursed);
+	CauldronCurseOrbMesh->SetVisibility(bReplicatedCauldronCursed);
+	for (UStaticMeshComponent* AuraMesh : CauldronCurseAuraMeshes)
+	{
+		if (AuraMesh)
+		{
+			AuraMesh->SetHiddenInGame(!bReplicatedCauldronCursed);
+			AuraMesh->SetVisibility(bReplicatedCauldronCursed, true);
+		}
+	}
+	if (bReplicatedCauldronCursed && !bCauldronCurseOrbAttachedToLooseSegment)
+	{
+		AttachCauldronCurseOrbToTopStaffSegment();
+	}
+	else
+	{
+		ClearCauldronCurseOrbLooseSegmentAttachment();
+		CauldronCurseOrbMesh->SetRelativeLocation(ReplicatedCauldronCurseOrbRelativeLocation);
+	}
+}
+
+void AWizardStaffWizardCharacter::AttachCauldronCurseOrbToTopStaffSegment()
+{
+	if (!CauldronCurseOrbMesh || !StaffRoot)
+	{
+		return;
+	}
+
+	if (UStaticMeshComponent* TopSegment = StaffComponent ? StaffComponent->GetTopStaffSegmentMesh() : nullptr)
+	{
+		// Segment anchors vary with the runtime staff rebuild, so use the visible
+		// segment's bounds instead of its local origin. This keeps the curse obvious
+		// above the staff tip for both short and grown staffs.
+		if (CauldronCurseOrbMesh->GetAttachParent())
+		{
+			CauldronCurseOrbMesh->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
+		}
+
+		const FVector OrbLocation = TopSegment->Bounds.Origin + FVector(0.0f, 0.0f, TopSegment->Bounds.BoxExtent.Z + 52.0f);
+		CauldronCurseOrbMesh->SetWorldLocation(OrbLocation);
+		CauldronCurseOrbMesh->SetWorldRotation(FRotator::ZeroRotator);
+		return;
+	}
+
+	if (CauldronCurseOrbMesh->GetAttachParent() != StaffRoot)
+	{
+		CauldronCurseOrbMesh->AttachToComponent(StaffRoot, FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+	}
+	CauldronCurseOrbMesh->SetRelativeLocation(ReplicatedCauldronCurseOrbRelativeLocation + FVector(0.0f, 0.0f, 45.0f));
+}
+
+void AWizardStaffWizardCharacter::OnRep_ReplicatedCauldronMovement()
+{
+	UpdateSloshMovementSettings();
+}
+
+void AWizardStaffWizardCharacter::OnRep_ReplicatedCauldronVialState()
+{
+	ReplicatedCauldronVialCount = FMath::Max(ReplicatedCauldronVialCount, 0);
+	ReplicatedCauldronVialEffectMultipliers.X = FMath::Max(ReplicatedCauldronVialEffectMultipliers.X, 0.05f);
+	ReplicatedCauldronVialEffectMultipliers.Y = FMath::Max(ReplicatedCauldronVialEffectMultipliers.Y, 0.05f);
+	ReplicatedCauldronVialEffectMultipliers.Z = FMath::Max(ReplicatedCauldronVialEffectMultipliers.Z, 0.05f);
+	ReplicatedCauldronVialInstabilityMultiplier = FMath::Max(ReplicatedCauldronVialInstabilityMultiplier, 1.0f);
+	UpdateSloshMovementSettings();
+}
+
+void AWizardStaffWizardCharacter::OnRep_ReplicatedCauldronBanking()
+{
+	ReplicatedCauldronBankingMovementMultipliers.X = FMath::Clamp(ReplicatedCauldronBankingMovementMultipliers.X, 0.05f, 1.0f);
+	ReplicatedCauldronBankingMovementMultipliers.Y = FMath::Clamp(ReplicatedCauldronBankingMovementMultipliers.Y, 0.05f, 1.0f);
+	UpdateSloshMovementSettings();
+}
+
+void AWizardStaffWizardCharacter::OnRep_ReplicatedCauldronStickyTether()
+{
+	UpdateCauldronStickyTetherVisual();
+}
+
+void AWizardStaffWizardCharacter::UpdateCauldronStickyTether(float DeltaSeconds)
+{
+	if (HasAuthority() && bReplicatedCauldronStickyTethered)
+	{
+		FVector ToAnchor = ReplicatedCauldronStickyTetherAnchor - GetActorLocation();
+		ToAnchor.Z = 0.0f;
+		const float Distance = ToAnchor.Size();
+		if (bBroomBoostActive && Distance >= CauldronStickyTetherBreakDistance)
+		{
+			SetCauldronStickyTetherState(false);
+		}
+		else if (!bBroomBoostActive && Distance > CauldronStickyTetherSlackDistance && ToAnchor.Normalize())
+		{
+			if (UCharacterMovementComponent* MoveComp = GetCharacterMovement())
+			{
+				const float DesiredReelSpeed = FMath::Clamp((Distance - CauldronStickyTetherSlackDistance) * 1.1f, 75.0f, 245.0f);
+				const FVector CurrentHorizontalVelocity(MoveComp->Velocity.X, MoveComp->Velocity.Y, 0.0f);
+				const FVector DesiredHorizontalVelocity = ToAnchor * DesiredReelSpeed;
+				const FVector ReeledVelocity = FMath::VInterpTo(CurrentHorizontalVelocity, DesiredHorizontalVelocity, DeltaSeconds, 4.5f);
+				MoveComp->Velocity.X = ReeledVelocity.X;
+				MoveComp->Velocity.Y = ReeledVelocity.Y;
+			}
+		}
+	}
+
+	UpdateCauldronStickyTetherVisual();
+}
+
+void AWizardStaffWizardCharacter::UpdateCauldronStickyTetherVisual()
+{
+	if (!CauldronStickyTetherMesh)
+	{
+		return;
+	}
+
+	const bool bShouldShow = bReplicatedCauldronStickyTethered;
+	CauldronStickyTetherMesh->SetHiddenInGame(!bShouldShow);
+	CauldronStickyTetherMesh->SetVisibility(bShouldShow);
+	if (!bShouldShow)
+	{
+		return;
+	}
+
+	const FVector Anchor = ReplicatedCauldronStickyTetherAnchor + FVector(0.0f, 0.0f, 5.0f);
+	const FVector WizardPoint = GetActorLocation() + FVector(0.0f, 0.0f, 28.0f);
+	const FVector TetherVector = WizardPoint - Anchor;
+	const float Length = FMath::Max(TetherVector.Size(), 1.0f);
+	const FVector Direction = TetherVector / Length;
+	CauldronStickyTetherMesh->SetWorldLocation((Anchor + WizardPoint) * 0.5f);
+	CauldronStickyTetherMesh->SetWorldRotation(FQuat::FindBetweenNormals(FVector::UpVector, Direction));
+	CauldronStickyTetherMesh->SetWorldScale3D(FVector(0.045f, 0.045f, Length / 100.0f));
+
+}
+
+void AWizardStaffWizardCharacter::UpdateCauldronCurseVisual(float DeltaSeconds)
+{
+	if (!bReplicatedCauldronCursed || !CauldronCurseOrbMesh)
+	{
+		return;
+	}
+	if (!bCauldronCurseOrbAttachedToLooseSegment)
+	{
+		AttachCauldronCurseOrbToTopStaffSegment();
+	}
+	const float Time = GetWorld() ? GetWorld()->GetTimeSeconds() : DeltaSeconds;
+	const float Pulse = 0.58f + (FMath::Sin(Time * 12.0f) * 0.09f);
+	CauldronCurseOrbMesh->SetWorldScale3D(FVector(Pulse));
+	UpdateCauldronCurseAuraVisual(DeltaSeconds);
+}
+
+void AWizardStaffWizardCharacter::UpdateCauldronCurseAuraVisual(float DeltaSeconds)
+{
+	const bool bShowAura = bReplicatedCauldronCursed && !bCauldronCurseOrbAttachedToLooseSegment;
+	const float Time = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+	for (int32 AuraIndex = 0; AuraIndex < CauldronCurseAuraMeshes.Num(); ++AuraIndex)
+	{
+		UStaticMeshComponent* AuraMesh = CauldronCurseAuraMeshes[AuraIndex];
+		if (!AuraMesh)
+		{
+			continue;
+		}
+		AuraMesh->SetHiddenInGame(!bShowAura);
+		AuraMesh->SetVisibility(bShowAura, true);
+		if (!bShowAura)
+		{
+			continue;
+		}
+
+		const float Phase = (Time * 2.3f) + (AuraIndex * (2.0f * UE_PI / FMath::Max(CauldronCurseAuraMeshes.Num(), 1)));
+		const float Radius = 54.0f + (AuraIndex % 3) * 24.0f + FMath::Sin(Phase * 1.7f) * 12.0f;
+		const float Height = 42.0f + (AuraIndex % 4) * 23.0f + FMath::Sin(Phase * 2.4f) * 26.0f;
+		AuraMesh->SetWorldLocation(GetActorLocation() + FVector(FMath::Cos(Phase) * Radius, FMath::Sin(Phase) * Radius, Height));
+		const float Scale = 0.14f + ((FMath::Sin(Phase * 2.8f) + 1.0f) * 0.075f);
+		AuraMesh->SetWorldScale3D(FVector(Scale));
+	}
 }
 
 void AWizardStaffWizardCharacter::UpdateSloshVisuals(float DeltaSeconds)
@@ -2828,19 +3613,40 @@ void AWizardStaffWizardCharacter::UpdateBonkVisual(float DeltaSeconds)
 		return;
 	}
 
+	FRotator SnapCueRotation = FRotator::ZeroRotator;
+	if (StaffSnapCueTimeRemaining > 0.0f)
+	{
+		StaffSnapCueTimeRemaining = FMath::Max(0.0f, StaffSnapCueTimeRemaining - DeltaSeconds);
+		const float CueAlpha = FMath::Clamp(StaffSnapCueTimeRemaining / FMath::Max(StaffSnapCueDurationSeconds, 0.01f), 0.0f, 1.0f);
+		const float TimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+		const float MegaScale = bLastStaffSnapCueWasMegaTemporarySegment ? 1.25f : 1.0f;
+		const float ShakeStrength = FMath::InterpEaseOut(0.0f, 1.0f, CueAlpha, 2.0f) * MegaScale;
+		SnapCueRotation = FRotator(
+			FMath::Sin(TimeSeconds * 44.0f) * StaffSnapCuePitchDegrees * ShakeStrength,
+			0.0f,
+			FMath::Cos(TimeSeconds * 39.0f) * StaffSnapCueRollDegrees * ShakeStrength);
+	}
+
 	if (bStaffClashActive)
 	{
 		const float TimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 		const float MashShake = FMath::Clamp(static_cast<float>(StaffClashMashCount) * 0.22f, 0.0f, 5.0f);
 		const float ClashWobble = FMath::Sin(TimeSeconds * 28.0f) * MashShake;
 		const FRotator ClashRotation(BonkTuning.StrikeEndPitchDegrees, ClashWobble * 0.25f, ClashWobble);
-		StaffRoot->SetRelativeRotation(StaffRootDefaultRelativeRotation + SloshStaffVisualRotation + HitReactionStaffVisualRotation + ClashRotation);
+		StaffRoot->SetRelativeRotation(StaffRootDefaultRelativeRotation + SloshStaffVisualRotation + HitReactionStaffVisualRotation + ClashRotation + SnapCueRotation);
+		return;
+	}
+
+	if (bReplicatedCauldronBanking)
+	{
+		const FRotator BankingRotation(BonkTuning.StrikeEndPitchDegrees, 0.0f, 0.0f);
+		StaffRoot->SetRelativeRotation(StaffRootDefaultRelativeRotation + SloshStaffVisualRotation + HitReactionStaffVisualRotation + BankingRotation + SnapCueRotation);
 		return;
 	}
 
 	if (QuickBonkVisualTimeRemaining <= 0.0f)
 	{
-		StaffRoot->SetRelativeRotation(StaffRootDefaultRelativeRotation + SloshStaffVisualRotation + HitReactionStaffVisualRotation);
+		StaffRoot->SetRelativeRotation(StaffRootDefaultRelativeRotation + SloshStaffVisualRotation + HitReactionStaffVisualRotation + SnapCueRotation);
 		return;
 	}
 
@@ -2852,7 +3658,7 @@ void AWizardStaffWizardCharacter::UpdateBonkVisual(float DeltaSeconds)
 	const float SideWobble = FMath::Sin(SwingAlpha * UE_PI) * BonkTuning.StrikeSideWobbleDegrees;
 	const FRotator SwingRotation(StrikePitch, SideWobble * 0.35f, SideWobble);
 
-	StaffRoot->SetRelativeRotation(StaffRootDefaultRelativeRotation + SloshStaffVisualRotation + HitReactionStaffVisualRotation + SwingRotation);
+	StaffRoot->SetRelativeRotation(StaffRootDefaultRelativeRotation + SloshStaffVisualRotation + HitReactionStaffVisualRotation + SwingRotation + SnapCueRotation);
 }
 
 void AWizardStaffWizardCharacter::ResolveQuickBonkHit()
@@ -2878,6 +3684,7 @@ void AWizardStaffWizardCharacter::ResolveQuickBonkHit()
 	QuickBonkImpactTimeRemaining = 0.0f;
 	QuickBonkHitCountThisSwing = 0;
 	QuickBonkHitWizardsThisSwing.Reset();
+	QuickBonkHitIngredientsThisSwing.Reset();
 }
 
 void AWizardStaffWizardCharacter::AddQuickBonkStressForHitCount(int32 HitCount, FName StressSource)
@@ -2907,9 +3714,41 @@ int32 AWizardStaffWizardCharacter::PerformQuickBonkHitDetection()
 		return 0;
 	}
 
+	TSet<AWizardStaffWizardCharacter*> HitWizards;
+	TSet<AWizardStaffCauldronIngredient*> HitIngredients;
+	AWizardStaffGameMode* GameMode = World->GetAuthGameMode<AWizardStaffGameMode>();
+	if (GameMode)
+	{
+		if (GameMode->HandleCauldronQuickBonk(this, AuthoritativeQuickBonkSequence))
+		{
+			++QuickBonkHitCountThisSwing;
+		}
+		TArray<AWizardStaffCauldronIngredient*> ArcHitIngredients;
+		GameMode->GatherCauldronIngredientsInBonkArc(this, ArcHitIngredients);
+		for (AWizardStaffCauldronIngredient* Ingredient : ArcHitIngredients)
+		{
+			if (Ingredient && !QuickBonkHitIngredientsThisSwing.Contains(Ingredient))
+			{
+				QuickBonkHitIngredientsThisSwing.Add(Ingredient);
+				HitIngredients.Add(Ingredient);
+			}
+		}
+	}
+
 	UBoxComponent* StaffCollisionBox = StaffComponent ? StaffComponent->GetStaffCollisionBox() : nullptr;
 	if (!StaffCollisionBox || StaffCollisionBox->GetCollisionEnabled() == ECollisionEnabled::NoCollision)
 	{
+		if (GameMode)
+		{
+			for (AWizardStaffCauldronIngredient* Ingredient : HitIngredients)
+			{
+				if (GameMode->HandleCauldronIngredientBonked(this, Ingredient))
+				{
+					++QuickBonkHitCountThisSwing;
+				}
+			}
+		}
+
 		if (GEngine && AWizardStaffHUD::IsFullDebugMode(this))
 		{
 			GEngine->AddOnScreenDebugMessage(2600 + GetDebugPlayerIndex(), 0.75f, FColor::Orange, TEXT("Quick Bonk: staff collision inactive."));
@@ -2920,11 +3759,11 @@ int32 AWizardStaffWizardCharacter::PerformQuickBonkHitDetection()
 	FCollisionObjectQueryParams ObjectQueryParams;
 	ObjectQueryParams.AddObjectTypesToQuery(ECC_Pawn);
 	ObjectQueryParams.AddObjectTypesToQuery(ECC_WorldDynamic);
+	ObjectQueryParams.AddObjectTypesToQuery(ECC_PhysicsBody);
 
 	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(WizardQuickBonk), false, this);
 	QueryParams.AddIgnoredActor(this);
 
-	TSet<AWizardStaffWizardCharacter*> HitWizards;
 	bool bHitReadyBell = false;
 
 	TArray<FOverlapResult> Overlaps;
@@ -2949,7 +3788,7 @@ int32 AWizardStaffWizardCharacter::PerformQuickBonkHitDetection()
 		if (!bHitReadyBell && HitComponent && HitComponent->ComponentHasTag(AWizardStaffPartyHall::GetReadyBellComponentTag()))
 		{
 			bHitReadyBell = true;
-			if (AWizardStaffGameMode* GameMode = World->GetAuthGameMode<AWizardStaffGameMode>())
+			if (GameMode)
 			{
 				GameMode->NotifyPartyHallReadyBellBonked(this);
 			}
@@ -2961,6 +3800,39 @@ int32 AWizardStaffWizardCharacter::PerformQuickBonkHitDetection()
 		{
 			QuickBonkHitWizardsThisSwing.Add(HitWizard);
 			HitWizards.Add(HitWizard);
+		}
+
+		AWizardStaffCauldronIngredient* HitIngredient = Cast<AWizardStaffCauldronIngredient>(Overlap.GetActor());
+		if (HitIngredient && !QuickBonkHitIngredientsThisSwing.Contains(HitIngredient))
+		{
+			QuickBonkHitIngredientsThisSwing.Add(HitIngredient);
+			HitIngredients.Add(HitIngredient);
+		}
+	}
+
+	if (GameMode)
+	{
+		TArray<AWizardStaffCauldronIngredient*> GeometryHitIngredients;
+		GameMode->GatherCauldronIngredientsInBonkBox(
+			StaffCollisionBox->GetComponentLocation(),
+			StaffCollisionBox->GetComponentQuat(),
+			ContactExtent,
+			GeometryHitIngredients);
+		for (AWizardStaffCauldronIngredient* Ingredient : GeometryHitIngredients)
+		{
+			if (Ingredient && !QuickBonkHitIngredientsThisSwing.Contains(Ingredient))
+			{
+				QuickBonkHitIngredientsThisSwing.Add(Ingredient);
+				HitIngredients.Add(Ingredient);
+			}
+		}
+
+		for (AWizardStaffCauldronIngredient* Ingredient : HitIngredients)
+		{
+			if (GameMode->HandleCauldronIngredientBonked(this, Ingredient))
+			{
+				++QuickBonkHitCountThisSwing;
+			}
 		}
 	}
 
@@ -3008,6 +3880,7 @@ bool AWizardStaffWizardCharacter::TryStartStaffClashWith(AWizardStaffWizardChara
 	QuickBonkVisualTimeRemaining = 0.0f;
 	QuickBonkHitCountThisSwing = 0;
 	QuickBonkHitWizardsThisSwing.Reset();
+	QuickBonkHitIngredientsThisSwing.Reset();
 
 	TargetWizard->StaffClashOpponent = this;
 	TargetWizard->StaffClashLockedLocation = TargetWizard->GetActorLocation();
@@ -3020,6 +3893,7 @@ bool AWizardStaffWizardCharacter::TryStartStaffClashWith(AWizardStaffWizardChara
 	TargetWizard->QuickBonkVisualTimeRemaining = 0.0f;
 	TargetWizard->QuickBonkHitCountThisSwing = 0;
 	TargetWizard->QuickBonkHitWizardsThisSwing.Reset();
+	TargetWizard->QuickBonkHitIngredientsThisSwing.Reset();
 
 	EndBroomBoost();
 	TargetWizard->EndBroomBoost();
@@ -3195,6 +4069,7 @@ void AWizardStaffWizardCharacter::ClearStaffClashState(bool bSyncReplicatedState
 	StaffClashLockedLocation = FVector::ZeroVector;
 	StaffClashTimeRemaining = 0.0f;
 	StaffClashMashCount = 0;
+	LastNetworkStaffClashMashTime = -1000.0f;
 	bStaffClashActive = false;
 	bStaffClashResolver = false;
 	if (bSyncReplicatedState)
@@ -3205,12 +4080,22 @@ void AWizardStaffWizardCharacter::ClearStaffClashState(bool bSyncReplicatedState
 
 void AWizardStaffWizardCharacter::RegisterStaffClashMash()
 {
-	if (!bStaffClashActive)
+	if (!HasAuthority() || !bStaffClashActive)
 	{
 		return;
 	}
 
-	++StaffClashMashCount;
+	if (const UWorld* World = GetWorld(); World && World->GetNetMode() != NM_Standalone)
+	{
+		const float Now = World->GetTimeSeconds();
+		if (Now < LastNetworkStaffClashMashTime + NetworkStaffClashMashMinIntervalSeconds)
+		{
+			return;
+		}
+		LastNetworkStaffClashMashTime = Now;
+	}
+
+	StaffClashMashCount = FMath::Min(StaffClashMashCount + 1, NetworkStaffClashMashCountLimit);
 	SyncReplicatedStaffClashStateFromAuthority();
 }
 
@@ -3260,6 +4145,7 @@ void AWizardStaffWizardCharacter::ApplyStaffClashWinningBonkToTarget(AWizardStaf
 		if (AWizardStaffGameMode* GameMode = World->GetAuthGameMode<AWizardStaffGameMode>())
 		{
 			GameMode->RecordTelemetryStaffClashWon(this, TargetWizard);
+			GameMode->NotifyCauldronWizardBonked(this, TargetWizard);
 		}
 	}
 
@@ -3308,6 +4194,7 @@ bool AWizardStaffWizardCharacter::ApplyBonkToTarget(AWizardStaffWizardCharacter*
 		if (AWizardStaffGameMode* GameMode = MutableWorld->GetAuthGameMode<AWizardStaffGameMode>())
 		{
 			GameMode->RecordTelemetryBonkLanded(this, TargetWizard);
+			GameMode->NotifyCauldronWizardBonked(this, TargetWizard);
 		}
 	}
 
@@ -3382,6 +4269,7 @@ void AWizardStaffWizardCharacter::PlayBonkStressFeedback(float StressAdded, bool
 
 void AWizardStaffWizardCharacter::HandleStaffSegmentSnapped(int32 NewSegmentCount, float RemainingStress)
 {
+	const bool bWasMegaTemporarySegment = bMegaStaffBrewActive && MegaStaffTemporarySegmentsRemaining > 0;
 	NotifyMegaStaffSegmentSnapped();
 	if (bManaSloshLocked)
 	{
@@ -3392,8 +4280,41 @@ void AWizardStaffWizardCharacter::HandleStaffSegmentSnapped(int32 NewSegmentCoun
 	{
 		ManaSlosh = FMath::Max(0.0f, ManaSlosh - ManaTuning.SloshReducedOnStaffSnap);
 	}
+	SyncReplicatedStaffSegmentCountFromAuthority();
 	SyncReplicatedManaSloshFromAuthority(true);
 	SyncReplicatedStaffStressFromAuthority(true);
+	SyncReplicatedStaffSnapCueFromAuthority(NewSegmentCount, bWasMegaTemporarySegment);
+
+	if (UWorld* World = GetWorld())
+	{
+		if (AWizardStaffGameMode* GameMode = World->GetAuthGameMode<AWizardStaffGameMode>())
+		{
+			GameMode->NotifyCauldronVialSegmentSnapped(this, StaffComponent ? StaffComponent->GetLastRemovedSegmentTag() : NAME_None);
+			GameMode->NotifyCauldronCursedWizardStaffSnapped(this);
+		}
+
+		if (World->GetNetMode() != NM_Standalone)
+		{
+			if (AWizardStaffGameMode* GameMode = World->GetAuthGameMode<AWizardStaffGameMode>())
+			{
+				const int32 PlayerIndex = GameMode->GetPlayerIndexForWizard(this);
+				const FString SnapMessage = PlayerIndex == INDEX_NONE
+					? FString::Printf(TEXT("Staff segment snapped! Staff %d"), FMath::Max(NewSegmentCount, 0))
+					: FString::Printf(
+						TEXT("P%d snapped %s! Staff %d"),
+						PlayerIndex + 1,
+						bWasMegaTemporarySegment ? TEXT("a Mega segment") : TEXT("a segment"),
+						FMath::Max(NewSegmentCount, 0));
+				GameMode->PublishReplicatedGameplayEvent(
+					EWizardReplicatedGameplayEventType::StaffSegmentSnapped,
+					SnapMessage,
+					PlayerIndex,
+					INDEX_NONE,
+					static_cast<float>(FMath::Max(NewSegmentCount, 0)),
+					false);
+			}
+		}
+	}
 
 	UE_LOG(LogTemp, Log, TEXT("Wizard %d staff snapped. Segments %d, remaining stress %.1f, slosh %.1f."),
 		GetDebugPlayerIndex(),

@@ -12,7 +12,11 @@ public class WizardStaff : ModuleRules
 			"CoreUObject",
 			"Engine",
 			"InputCore",
+			"OnlineSubsystem",
+			"OnlineSubsystemUtils",
 			"ProceduralMeshComponent"
 		});
+
+		DynamicallyLoadedModuleNames.Add("OnlineSubsystemSteam");
 	}
 }

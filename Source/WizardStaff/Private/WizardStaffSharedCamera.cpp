@@ -56,9 +56,14 @@ void AWizardStaffSharedCamera::Tick(float DeltaSeconds)
 	const float SafeRadius = FMath::Max(Radius, MinimumTrackedRadius);
 	const float DesiredArmLength = FMath::Clamp((SafeRadius + PlayerBoundsPadding) * RadiusToArmLengthScale, MinArmLength, MaxArmLength);
 
-	SetActorLocation(FMath::VInterpTo(GetActorLocation(), DesiredLocation, DeltaSeconds, FollowLerpSpeed));
+	const bool bLargePhaseTransition = FVector::DistSquared2D(GetActorLocation(), DesiredLocation) > FMath::Square(PhaseTransitionSnapDistance);
+	SetActorLocation(bLargePhaseTransition
+		? DesiredLocation
+		: FMath::VInterpTo(GetActorLocation(), DesiredLocation, DeltaSeconds, FollowLerpSpeed));
 	SpringArm->SetRelativeRotation(FRotator(CameraPitchDegrees, 0.0f, 0.0f));
-	SpringArm->TargetArmLength = FMath::FInterpTo(SpringArm->TargetArmLength, DesiredArmLength, DeltaSeconds, ZoomLerpSpeed);
+	SpringArm->TargetArmLength = bLargePhaseTransition
+		? DesiredArmLength
+		: FMath::FInterpTo(SpringArm->TargetArmLength, DesiredArmLength, DeltaSeconds, ZoomLerpSpeed);
 }
 
 void AWizardStaffSharedCamera::ApplyToLocalPlayerControllers()
@@ -157,6 +162,12 @@ void AWizardStaffSharedCamera::AddPawnTrackingPoints(const APawn* Pawn, TArray<F
 	}
 
 	const FVector PawnLocation = Pawn->GetActorLocation();
+	const AWizardStaffWizardCharacter* Wizard = Cast<AWizardStaffWizardCharacter>(Pawn);
+	if (Wizard && Wizard->IsReadableOutOfArenaRespawning() && PawnLocation.Z < PendingRespawnIgnoreBelowZ)
+	{
+		return;
+	}
+
 	OutLocations.Add(PawnLocation);
 
 	if (!bIncludeStaffHeightInZoom)
@@ -164,7 +175,6 @@ void AWizardStaffSharedCamera::AddPawnTrackingPoints(const APawn* Pawn, TArray<F
 		return;
 	}
 
-	const AWizardStaffWizardCharacter* Wizard = Cast<AWizardStaffWizardCharacter>(Pawn);
 	if (!Wizard || !Wizard->StaffComponent)
 	{
 		return;

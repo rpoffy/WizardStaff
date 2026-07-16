@@ -2,6 +2,7 @@
 
 #include "EngineUtils.h"
 #include "GameFramework/Controller.h"
+#include "WizardStaffGameInstance.h"
 #include "WizardStaffWizardCharacter.h"
 #include "Net/UnrealNetwork.h"
 
@@ -25,7 +26,7 @@ void AWizardStaffPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimePropert
 	DOREPLIFETIME(AWizardStaffPlayerState, WizardSummaryText);
 }
 
-void AWizardStaffPlayerState::SetWizardPlayerMirror(
+bool AWizardStaffPlayerState::SetWizardPlayerMirror(
 	int32 NewDisplaySlot,
 	int32 NewColorIndex,
 	int32 NewRoundWins,
@@ -36,15 +37,95 @@ void AWizardStaffPlayerState::SetWizardPlayerMirror(
 	bool bNewPlaytestBot,
 	const FString& NewSummaryText)
 {
+	if (!HasAuthority())
+	{
+		return false;
+	}
+
+	const int32 SafeColorIndex = FMath::Max(NewColorIndex, 0);
+	const int32 SafeRoundWins = FMath::Max(NewRoundWins, 0);
+	const int32 SafeGrandWizardFavor = FMath::Max(NewGrandWizardFavor, 0);
+	const FString SafeSummaryText = NewSummaryText.Left(160);
+	const bool bChanged = WizardDisplaySlot != NewDisplaySlot
+		|| WizardColorIndex != SafeColorIndex
+		|| RoundWins != SafeRoundWins
+		|| GrandWizardFavor != SafeGrandWizardFavor
+		|| CurrentTrialScore != NewCurrentTrialScore
+		|| StaffsAtDawnScore != NewStaffsAtDawnScore
+		|| bPartyHallReady != bNewPartyHallReady
+		|| bPlaytestBot != bNewPlaytestBot
+		|| WizardSummaryText != SafeSummaryText;
+	if (!bChanged)
+	{
+		return false;
+	}
+
 	WizardDisplaySlot = NewDisplaySlot;
-	WizardColorIndex = FMath::Max(NewColorIndex, 0);
-	RoundWins = FMath::Max(NewRoundWins, 0);
-	GrandWizardFavor = FMath::Max(NewGrandWizardFavor, 0);
+	WizardColorIndex = SafeColorIndex;
+	RoundWins = SafeRoundWins;
+	GrandWizardFavor = SafeGrandWizardFavor;
 	CurrentTrialScore = NewCurrentTrialScore;
 	StaffsAtDawnScore = NewStaffsAtDawnScore;
 	bPartyHallReady = bNewPartyHallReady;
 	bPlaytestBot = bNewPlaytestBot;
-	WizardSummaryText = NewSummaryText.Left(160);
+	WizardSummaryText = SafeSummaryText;
+	return true;
+}
+
+void AWizardStaffPlayerState::SendAuthoritativeSteamMatchResultToOwner(
+	int32 MatchGeneration,
+	int32 PlayerSlot,
+	int32 WinnerSlot,
+	int32 FinalGrandWizardFavor,
+	int32 FinalRoundWins)
+{
+	if (!HasAuthority()
+		|| bPlaytestBot
+		|| MatchGeneration <= 0
+		|| PlayerSlot < 0
+		|| PlayerSlot != WizardDisplaySlot)
+	{
+		return;
+	}
+
+	ClientSubmitAuthoritativeSteamMatchResult(
+		MatchGeneration,
+		PlayerSlot,
+		WinnerSlot,
+		FMath::Max(FinalGrandWizardFavor, 0),
+		FMath::Max(FinalRoundWins, 0));
+}
+
+void AWizardStaffPlayerState::ClientSubmitAuthoritativeSteamMatchResult_Implementation(
+	int32 MatchGeneration,
+	int32 PlayerSlot,
+	int32 WinnerSlot,
+	int32 FinalGrandWizardFavor,
+	int32 FinalRoundWins)
+{
+	if (bPlaytestBot || PlayerSlot < 0 || PlayerSlot != WizardDisplaySlot)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("WizardStaff Steam result delivery rejected on client: deliveredSlot=%d mirroredSlot=%d bot=%s."),
+			PlayerSlot,
+			WizardDisplaySlot,
+			bPlaytestBot ? TEXT("true") : TEXT("false"));
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	UWizardStaffGameInstance* WizardGameInstance = World ? Cast<UWizardStaffGameInstance>(World->GetGameInstance()) : nullptr;
+	if (!WizardGameInstance)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("WizardStaff Steam result delivery could not find WizardStaffGameInstance for P%d."), PlayerSlot + 1);
+		return;
+	}
+
+	WizardGameInstance->SubmitAuthoritativeSteamMatchResult(
+		MatchGeneration,
+		PlayerSlot,
+		WinnerSlot,
+		FinalGrandWizardFavor,
+		FinalRoundWins);
 }
 
 void AWizardStaffPlayerState::OnRep_WizardDisplaySlot()

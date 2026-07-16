@@ -181,6 +181,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Wizard Staff")
 	int32 AddStaffSegment();
 
+	int32 AddStaffSegmentWithTag(FName SegmentTag, const FLinearColor& SegmentColor);
+
 	UFUNCTION(BlueprintCallable, Category = "Wizard Staff")
 	void RebuildStaffSegmentsForCount(int32 TargetSegmentCount);
 
@@ -216,6 +218,11 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Wizard Staff|Collision")
 	UBoxComponent* GetStaffCollisionBox() const { return StaffCollisionBox.Get(); }
+
+	UStaticMeshComponent* GetTopStaffSegmentMesh() const { return SegmentMeshes.Num() > 0 ? SegmentMeshes.Last().Get() : nullptr; }
+	FName GetTopStaffSegmentTag() const { return SegmentTags.Num() > 0 ? SegmentTags.Last() : NAME_None; }
+	FName GetLastRemovedSegmentTag() const { return LastRemovedSegmentTag; }
+	const TArray<FName>& GetStaffSegmentTags() const { return SegmentTags; }
 
 	UFUNCTION(BlueprintPure, Category = "Wizard Staff|Collision")
 	float GetControlInputMultiplier() const;
@@ -305,7 +312,7 @@ protected:
 	void NotifyOwnerSegmentCountChanged() const;
 	void NotifyOwnerStaffStressChanged(bool bForce = false) const;
 	void DrawStressDebug() const;
-	int32 AddStaffSegmentInternal(bool bRecordTelemetry);
+	int32 AddStaffSegmentInternal(bool bRecordTelemetry, FName SegmentTag = NAME_None, const FLinearColor* OverrideSegmentColor = nullptr);
 
 private:
 	UPROPERTY(Transient)
@@ -316,6 +323,9 @@ private:
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UStaticMeshComponent>> SegmentMeshes;
+
+	TArray<FName> SegmentTags;
+	FName LastRemovedSegmentTag = NAME_None;
 
 	bool bWasStaffObstructed = false;
 	FVector LastCollisionLocation = FVector::ZeroVector;

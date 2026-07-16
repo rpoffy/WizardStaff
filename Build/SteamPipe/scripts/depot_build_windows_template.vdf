@@ -1,0 +1,19 @@
+"DepotBuild"
+{
+    "DepotID" "<WINDOWS_DEPOT_ID>"
+
+    // Set this to the packaged Windows build folder, or to:
+    // <STEAMPIPE_CONTENT_ROOT>\\windows
+    // after copying the packaged build into Build\\SteamPipe\\content\\windows.
+    "ContentRoot" "<BUILD_OUTPUT_PATH>"
+
+    "FileMapping"
+    {
+        "LocalPath" "*"
+        "DepotPath" "."
+        "Recursive" "1"
+    }
+
+    // Keep local debug symbols out of the private SteamPipe content by default.
+    "FileExclusion" "*.pdb"
+}

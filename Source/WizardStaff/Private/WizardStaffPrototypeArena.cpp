@@ -4,6 +4,7 @@
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/CollisionProfile.h"
+#include "Net/UnrealNetwork.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Algo/Sort.h"
 
@@ -61,6 +62,59 @@ AWizardStaffPrototypeArena::AWizardStaffPrototypeArena()
 	CreateSpawnMarker(TEXT("MugSpawn_10"), FVector(360.0f, 470.0f, 0.0f), FRotator::ZeroRotator, FColor::Cyan, 0.8f);
 	CreateSpawnMarker(TEXT("MugSpawn_11"), FVector(0.0f, -760.0f, 0.0f), FRotator::ZeroRotator, FColor::Cyan, 0.8f);
 	CreateSpawnMarker(TEXT("MugSpawn_12"), FVector(0.0f, 760.0f, 0.0f), FRotator::ZeroRotator, FColor::Cyan, 0.8f);
+}
+
+void AWizardStaffPrototypeArena::BeginPlay()
+{
+	Super::BeginPlay();
+	ApplyPhasePresentationState();
+}
+
+void AWizardStaffPrototypeArena::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(AWizardStaffPrototypeArena, bReplicatedPhasePresentationActive);
+}
+
+void AWizardStaffPrototypeArena::SetPhasePresentationActive(bool bActive)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	const bool bStateChanged = bReplicatedPhasePresentationActive != bActive;
+	bReplicatedPhasePresentationActive = bActive;
+	ApplyPhasePresentationState();
+	if (bStateChanged)
+	{
+		ForceNetUpdate();
+	}
+}
+
+void AWizardStaffPrototypeArena::OnRep_PhasePresentationActive()
+{
+	ApplyPhasePresentationState();
+}
+
+void AWizardStaffPrototypeArena::ApplyPhasePresentationState()
+{
+	SetActorHiddenInGame(!bReplicatedPhasePresentationActive);
+
+	for (UStaticMeshComponent* BlockMesh : ArenaBlockMeshes)
+	{
+		if (!BlockMesh)
+		{
+			continue;
+		}
+
+		BlockMesh->SetHiddenInGame(!bReplicatedPhasePresentationActive);
+		BlockMesh->SetVisibility(bReplicatedPhasePresentationActive);
+		BlockMesh->SetCollisionEnabled(bReplicatedPhasePresentationActive
+			? ECollisionEnabled::QueryAndPhysics
+			: ECollisionEnabled::NoCollision);
+	}
 }
 
 bool AWizardStaffPrototypeArena::GetPlayerSpawnTransform(int32 PlayerIndex, int32 PlayerCount, FTransform& OutTransform) const

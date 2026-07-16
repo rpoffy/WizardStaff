@@ -20,8 +20,11 @@ enum class EWizardReplicatedGameplayEventType : uint8
 	StaffsPowerupCollected UMETA(DisplayName = "Staffs Powerup Collected"),
 	MegaStaffGranted UMETA(DisplayName = "Mega Staff Granted"),
 	MegaStaffExpired UMETA(DisplayName = "Mega Staff Expired"),
+	StaffSegmentSnapped UMETA(DisplayName = "Staff Segment Snapped"),
 	StaffClashStarted UMETA(DisplayName = "Staff Clash Started"),
 	StaffClashResolved UMETA(DisplayName = "Staff Clash Resolved"),
+	CauldronIngredientDeposited UMETA(DisplayName = "Cauldron Ingredient Deposited"),
+	CauldronCurse UMETA(DisplayName = "Cauldron Curse"),
 	GrandWizardCandidateChanged UMETA(DisplayName = "Grand Wizard Candidate Changed"),
 	FinalWinner UMETA(DisplayName = "Final Winner"),
 	RematchStarted UMETA(DisplayName = "Rematch Started")
@@ -87,6 +90,8 @@ public:
 		float NewTrialResultsRemainingTime,
 		float NewIntermissionRemainingTime,
 		float NewFinalRoundRemainingTime);
+
+	void SetCauldronMirror(float NewRemainingTime, int32 NewCursedPlayerIndex, float NewCurseRemainingTime, int32 NewBankingPlayerIndex = INDEX_NONE, int32 NewBankingTransferredCount = 0, float NewBankingProgressAlpha = 0.0f);
 
 	void IncrementMatchSessionGeneration();
 	void AddReplicatedGameplayEvent(
@@ -177,6 +182,24 @@ public:
 	float GetReplicatedFinalRoundRemainingTime() const { return ReplicatedFinalRoundRemainingTime; }
 
 	UFUNCTION(BlueprintPure, Category = "Wizard Staff|Online Scaffold")
+	float GetReplicatedCauldronRemainingTime() const { return ReplicatedCauldronRemainingTime; }
+
+	UFUNCTION(BlueprintPure, Category = "Wizard Staff|Online Scaffold")
+	int32 GetReplicatedCauldronCursedPlayerIndex() const { return ReplicatedCauldronCursedPlayerIndex; }
+
+	UFUNCTION(BlueprintPure, Category = "Wizard Staff|Online Scaffold")
+	float GetReplicatedCauldronCurseRemainingTime() const { return ReplicatedCauldronCurseRemainingTime; }
+
+	UFUNCTION(BlueprintPure, Category = "Wizard Staff|Online Scaffold")
+	int32 GetReplicatedCauldronBankingPlayerIndex() const { return ReplicatedCauldronBankingPlayerIndex; }
+
+	UFUNCTION(BlueprintPure, Category = "Wizard Staff|Online Scaffold")
+	int32 GetReplicatedCauldronBankingTransferredCount() const { return ReplicatedCauldronBankingTransferredCount; }
+
+	UFUNCTION(BlueprintPure, Category = "Wizard Staff|Online Scaffold")
+	float GetReplicatedCauldronBankingProgressAlpha() const { return ReplicatedCauldronBankingProgressAlpha; }
+
+	UFUNCTION(BlueprintPure, Category = "Wizard Staff|Online Scaffold")
 	float GetActiveReplicatedTimer() const;
 
 	UFUNCTION(BlueprintPure, Category = "Wizard Staff|Online Scaffold")
@@ -230,6 +253,24 @@ protected:
 
 	UPROPERTY(Replicated, VisibleInstanceOnly, BlueprintReadOnly, Category = "Wizard Staff|Online Scaffold")
 	float ReplicatedFinalRoundRemainingTime = 0.0f;
+
+	UPROPERTY(Replicated, VisibleInstanceOnly, BlueprintReadOnly, Category = "Wizard Staff|Online Scaffold")
+	float ReplicatedCauldronRemainingTime = 0.0f;
+
+	UPROPERTY(Replicated, VisibleInstanceOnly, BlueprintReadOnly, Category = "Wizard Staff|Online Scaffold")
+	int32 ReplicatedCauldronCursedPlayerIndex = INDEX_NONE;
+
+	UPROPERTY(Replicated, VisibleInstanceOnly, BlueprintReadOnly, Category = "Wizard Staff|Online Scaffold")
+	float ReplicatedCauldronCurseRemainingTime = 0.0f;
+
+	UPROPERTY(Replicated, VisibleInstanceOnly, BlueprintReadOnly, Category = "Wizard Staff|Online Scaffold")
+	int32 ReplicatedCauldronBankingPlayerIndex = INDEX_NONE;
+
+	UPROPERTY(Replicated, VisibleInstanceOnly, BlueprintReadOnly, Category = "Wizard Staff|Online Scaffold")
+	int32 ReplicatedCauldronBankingTransferredCount = 0;
+
+	UPROPERTY(Replicated, VisibleInstanceOnly, BlueprintReadOnly, Category = "Wizard Staff|Online Scaffold")
+	float ReplicatedCauldronBankingProgressAlpha = 0.0f;
 
 	UPROPERTY(Replicated, VisibleInstanceOnly, BlueprintReadOnly, Category = "Wizard Staff|Online Scaffold")
 	int32 ReplicatedCompletedTrialCount = 0;
