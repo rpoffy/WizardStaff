@@ -109,6 +109,17 @@ Latest promoted and human-validated build on 2026-07-10:
 - `default` remains on human-validated Build `24152860`.
 - `WizardStaff_BestGrandWizardFavor` and its backing integer stat are implemented/configured, but Steam-delivered submission still requires private-branch gameplay validation.
 
+Current private playtest candidate on 2026-07-16:
+
+- Steam Build ID: `24238419`.
+- Depot manifest ID: `593837560765890906`.
+- Windows Development package: 95 mapped files totaling approximately 507 MB.
+- UE 5.7 build, cook, stage, archive, SteamPipe preview, and inactive upload all completed successfully.
+- Local packaged startup loaded `/Game/Maps/WizardStaff_Prototype`, `AWizardStaffGameMode`, runtime fallback lighting, and the Party Hall without fatal startup errors.
+- The cook exposed a native-constructor physical-material access in the legacy Cauldron ingredient. Its unchanged 16 kg authority mass setup now runs in `BeginPlay`, and the subsequent cook passed.
+- The uploaded build was manually assigned only to password-protected `private_test`; `default` remains unchanged on Build `24152860`.
+- Steam installation and a human full-loop pass of Build `24238419` completed successfully on 2026-07-16. The in-game Party Hall standings board was also observed working; this does not yet verify Steamworks leaderboard write/flush/read-back.
+
 ## Sources Checked
 
 - Valve SteamPipe upload/build script documentation: https://partner.steamgames.com/doc/sdk/uploading

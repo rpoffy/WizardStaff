@@ -1,6 +1,6 @@
 # Wizard Staff Technical Architecture
 
-**Last Updated:** 2026-07-15
+**Last Updated:** 2026-07-16
 
 ## Project Baseline
 
@@ -117,4 +117,5 @@ A host session was observed. Same-machine multi-process joining encountered Stea
 
 - `WizardStaff.Build.cs` depends on OnlineSubsystem and OnlineSubsystemUtils and dynamically loads OnlineSubsystemSteam.
 - The active Steam development/release AppID is in configuration. Do not replace it with AppID 480 or publish secrets in docs.
+- Runtime physics values that require body/physical-material access must be applied after engine initialization. `AWizardStaffCauldronIngredient` keeps its component defaults in the constructor and applies the unchanged 16 kg authority mass override in `BeginPlay`; this is required for UE 5.7 commandlet cooking.
 - SteamPipe and branch work belong to Steamworks operations, not gameplay code. See [CURRENT_STATE.md](CURRENT_STATE.md) for evidence boundaries.

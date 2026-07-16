@@ -1,6 +1,6 @@
 # Playtest Plan
 
-**Last Updated:** 2026-07-15
+**Last Updated:** 2026-07-16
 
 This is a repeatable validation plan, not proof that every item has already passed. Record date, build, mode, players, observations, and untested items after a session.
 
@@ -32,7 +32,7 @@ Use standalone PIE first. Cauldron remains development-only unless explicitly pr
 5. Test banking initiation from its intended access point with a short and a very long staff. Confirm a confirmed bonk starts banking reliably from reasonable nearby angles/ranges, while passive proximity, wrong-side attempts, and leaving the 360-unit hold range do not bank.
 6. Deposit enough Speed and Burdening Power vials to observe the server-owned 25% hazard roll. Confirm Speed only creates slippery puddles, Burdening Power only creates sticky sludge, no timed random hazards appear, and sticky remains mild/readable with broom-boost escape.
 7. Walk through a slippery puddle at low and high Mana Slosh. Confirm its entry shove follows travel direction, high Slosh skids farther, low friction carries out for about 1.5 seconds after leaving, and Trial cleanup restores normal movement.
-8. Use `DebugAssignCauldronCurse 0`, then have the cursed wizard Quick Bonk the active gold intake. Confirm the orb clears, the cauldron boils violently, five hollow red landing circles appear before five staggered arcs, and each blast affects only its marked radius at a noticeably weaker-than-normal curse force. Confirm it awards no score, removes no vial, and cannot be triggered by passive contact or an inactive intake.
+8. Use `DebugAssignCauldronCurse 0`, then have the cursed wizard Quick Bonk the active gold intake. Confirm the orb clears, the cauldron boils violently, eight hollow red landing circles appear before eight staggered arcs, and each blast affects only its marked radius at a noticeably weaker-than-normal curse force. Confirm it awards no score, removes no vial, and cannot be triggered by passive contact or an inactive intake.
 9. Exercise cursed-orb attachment, transfer/Clash behavior, snap/ground behavior, detonation, cleanup, and end-of-match cleanup.
 10. Ring out a player and verify respawn/camera behavior without camera pull beneath the floor.
 11. Confirm score-driven staff growth follows current tuning.
@@ -49,7 +49,7 @@ Use standalone PIE first. Cauldron remains development-only unless explicitly pr
 5. Run one pass through Mug Run, Staffs at Dawn, Cauldron Catastrophe, and Final. Exercise one example of each replicated system where practical.
 6. In both windows, confirm the shared prototype arena is hidden during Party Hall/Staffs/Cauldron, visible before Mug staging, and restored before Final presentation and placement.
 7. Snap a staff segment and confirm authoritative staff count/readability updates in both windows. Loose snapped physics debris is intentionally standalone-only and is not expected online.
-8. Compare the focused gameplay window with the embedded/unfocused PIE viewport during rapid remote-player turning. Record whether choppiness follows focus/background throttling or remains when both views are actively observed.
+8. Judge movement/facing smoothness only while the relevant PIE viewport is focused. Unreal may throttle an unfocused embedded viewport to save resources; background-only choppiness is an editor artifact, not evidence of a gameplay replication defect.
 9. Rematch; verify no stale pickups, projectiles, powerups, Mega Staff, combat, respawn, Final, HUD, or event-feed state.
 10. In both windows, watch each countdown and rematch handoff for duplicate pawn placement or a second camera snap. The server should stage each wizard once after the destination presentation/floor is ready.
 11. Throughout the loop, compare host and client HUD mirrors: player slot/color, ready state, staff/current Trial score, Favor/wins, all countdown/result/intermission timers, Cauldron curse/banking values, Final Candidate/steal/winner state, and event-feed clearing. Values should remain current and readable; no gameplay may depend on the client mirrors.
@@ -76,7 +76,7 @@ Do not claim Steam join is passed until this environment exists and both sides a
 5. Verify the configured `WizardStaff_BestGrandWizardFavor` leaderboard in Steamworks after sufficient propagation time.
 6. Repeat one lower-score result to verify KeepBest behavior rather than assuming overwrite behavior.
 
-**Current status:** private Steam installation/full loop is recorded as passing; leaderboard submission/read-back remains unverified.
+**Current status:** BuildID `24238419` on `private_test` passed a Steam-installed human full-loop playthrough on 2026-07-16, including the in-game Party Hall standings board. Steamworks leaderboard submission/read-back remains unverified.
 
 ## Reporting Template
 
