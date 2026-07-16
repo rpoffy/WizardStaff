@@ -56,6 +56,9 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Party Hall|Props")
 	TArray<TObjectPtr<UStaticMeshComponent>> PhysicsPropMeshes;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Party Hall|Props")
+	TArray<float> PhysicsPropMassOverrides;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Party Hall|Signs")
 	TArray<TObjectPtr<UTextRenderComponent>> HallSignTexts;
 

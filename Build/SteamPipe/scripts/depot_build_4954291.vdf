@@ -1,0 +1,19 @@
+"DepotBuild"
+{
+    "DepotID" "4954291"
+    "ContentRoot" "C:\\Users\\Roger\\Documents\\Wizard's Staff game\\Build\\SteamPipe\\content\\windows"
+
+    "FileMapping"
+    {
+        "LocalPath" "*"
+        "DepotPath" "."
+        "Recursive" "1"
+    }
+
+    "FileExclusion" "*.pdb"
+    "FileExclusion" "Manifest_*.txt"
+    "FileExclusion" ".gitkeep"
+    "FileExclusion" "steam_appid.txt"
+    "FileExclusion" "Engine\\Saved\\*"
+    "FileExclusion" "WizardStaff\\Saved\\*"
+}

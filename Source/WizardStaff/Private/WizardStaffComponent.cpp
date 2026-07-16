@@ -77,6 +77,13 @@ int32 UWizardStaffComponent::AddStaffSegment()
 	return NewSegmentCount;
 }
 
+int32 UWizardStaffComponent::AddStaffSegmentWithTag(FName SegmentTag, const FLinearColor& SegmentColor)
+{
+	const int32 NewSegmentCount = AddStaffSegmentInternal(true, SegmentTag, &SegmentColor);
+	NotifyOwnerSegmentCountChanged();
+	return NewSegmentCount;
+}
+
 void UWizardStaffComponent::RebuildStaffSegmentsForCount(int32 TargetSegmentCount)
 {
 	const float SavedStress = StaffStress;
@@ -99,7 +106,7 @@ void UWizardStaffComponent::RebuildStaffSegmentsForCount(int32 TargetSegmentCoun
 	NotifyOwnerStaffStressChanged(true);
 }
 
-int32 UWizardStaffComponent::AddStaffSegmentInternal(bool bRecordTelemetry)
+int32 UWizardStaffComponent::AddStaffSegmentInternal(bool bRecordTelemetry, FName SegmentTag, const FLinearColor* OverrideSegmentColor)
 {
 	if (SegmentCount >= VisualTuning.MaxTestSegments)
 	{
@@ -147,9 +154,10 @@ int32 UWizardStaffComponent::AddStaffSegmentInternal(bool bRecordTelemetry)
 		return SegmentCount;
 	}
 
-	const FLinearColor SegmentColor = VisualTuning.bAlternateSegmentColors && (NewSegmentIndex % 2 == 1)
+	const FLinearColor DefaultSegmentColor = VisualTuning.bAlternateSegmentColors && (NewSegmentIndex % 2 == 1)
 		? VisualTuning.SegmentAlternateColor
 		: VisualTuning.SegmentColor;
+	const FLinearColor SegmentColor = OverrideSegmentColor ? *OverrideSegmentColor : DefaultSegmentColor;
 
 	UStaticMeshComponent* NewSegmentMesh = CreateRuntimeMesh(
 		MeshName,
@@ -167,6 +175,7 @@ int32 UWizardStaffComponent::AddStaffSegmentInternal(bool bRecordTelemetry)
 
 	SegmentAnchors.Add(NewAnchor);
 	SegmentMeshes.Add(NewSegmentMesh);
+	SegmentTags.Add(SegmentTag);
 	SegmentCount = SegmentMeshes.Num();
 	UpdateStaffCollision();
 
@@ -197,6 +206,7 @@ bool UWizardStaffComponent::RemoveTopStaffSegment(bool bSpawnPhysicsSegment)
 	}
 
 	const FTransform RemovedSegmentTransform = SegmentMeshes.Last()->GetComponentTransform();
+	LastRemovedSegmentTag = SegmentTags.IsValidIndex(SegmentTags.Num() - 1) ? SegmentTags.Last() : NAME_None;
 	if (bSpawnPhysicsSegment)
 	{
 		SpawnSnappedPhysicsSegment(RemovedSegmentTransform);
@@ -235,6 +245,8 @@ void UWizardStaffComponent::ClearStaffSegments()
 
 	SegmentMeshes.Reset();
 	SegmentAnchors.Reset();
+	SegmentTags.Reset();
+	LastRemovedSegmentTag = NAME_None;
 	SegmentCount = 0;
 	StaffStress = 0.0f;
 	UpdateStaffCollision();
@@ -321,14 +333,16 @@ bool UWizardStaffComponent::SnapTopStaffSegment()
 		return false;
 	}
 
-	RemoveTopStaffSegment(true);
+	const UWorld* World = GetWorld();
+	const bool bSpawnLocalPhysicsSegment = !World || World->GetNetMode() == NM_Standalone;
+	RemoveTopStaffSegment(bSpawnLocalPhysicsSegment);
 	const float SafeMaxStress = FMath::Max(StressTuning.MaxStaffStress, 1.0f);
 	StaffStress = SegmentCount > 0 ? FMath::Clamp(SafeMaxStress * StressTuning.StressAfterSnapRatio, 0.0f, SafeMaxStress - 1.0f) : 0.0f;
 	NotifyOwnerStaffStressChanged(true);
 
-	if (UWorld* World = GetWorld())
+	if (UWorld* TelemetryWorld = GetWorld())
 	{
-		if (AWizardStaffGameMode* GameMode = World->GetAuthGameMode<AWizardStaffGameMode>())
+		if (AWizardStaffGameMode* GameMode = TelemetryWorld->GetAuthGameMode<AWizardStaffGameMode>())
 		{
 			GameMode->RecordTelemetryStaffSegmentSnapped(Cast<AWizardStaffWizardCharacter>(GetOwner()));
 		}
@@ -336,7 +350,10 @@ bool UWizardStaffComponent::SnapTopStaffSegment()
 
 	OnStaffSegmentSnapped.Broadcast(SegmentCount, StaffStress);
 
-	AWizardStaffHUD::PushGameplayMessage(this, TEXT("STAFF SNAP! Top segment broke off."), FColor::Red, 2.0f, EWizardHudMessageCategory::Gameplay);
+	if (bSpawnLocalPhysicsSegment)
+	{
+		AWizardStaffHUD::PushGameplayMessage(this, TEXT("STAFF SNAP! Top segment broke off."), FColor::Red, 2.0f, EWizardHudMessageCategory::Gameplay);
+	}
 	if (GEngine && AWizardStaffHUD::IsFullDebugMode(this))
 	{
 		GEngine->AddOnScreenDebugMessage(static_cast<uint64>(GetUniqueID()) + 3100ULL, 1.25f, FColor::Red, TEXT("STAFF SNAP! Top segment broke off."));
@@ -808,6 +825,10 @@ void UWizardStaffComponent::RemoveTopSegmentComponents()
 	if (SegmentAnchors.Num() > 0)
 	{
 		SegmentAnchors.Pop(EAllowShrinking::No);
+	}
+	if (SegmentTags.Num() > 0)
+	{
+		SegmentTags.Pop(EAllowShrinking::No);
 	}
 
 	if (TopMesh)

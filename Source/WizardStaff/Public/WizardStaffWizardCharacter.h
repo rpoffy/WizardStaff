@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
+#include "WizardStaffCauldronVialTypes.h"
 #include "WizardStaffWizardCharacter.generated.h"
 
 class UStaticMeshComponent;
@@ -12,6 +13,7 @@ class USoundBase;
 class UWizardStaffComponent;
 class UWizardStaffPlaytestBotComponent;
 class AWizardStaffArcanePinballProjectile;
+class AWizardStaffCauldronIngredient;
 
 UENUM(BlueprintType)
 enum class EWizardBrewRewardType : uint8
@@ -456,6 +458,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Wizard|Mug")
 	void DrinkMug();
 
+	// Called only by the authoritative pickup path. Direct DrinkMug input stays standalone-only.
+	void ApplyCollectedMugReward();
+
 	// Compatibility wrapper for older prototype Blueprint/input references.
 	UFUNCTION(BlueprintCallable, Category = "Wizard|Mug", meta = (DeprecatedFunction, DeprecationMessage = "Use DrinkMug. Mana is no longer a spendable resource; mugs grant staff growth, Mana Slosh, and optional brew rewards."))
 	void DrinkManaMug();
@@ -511,6 +516,33 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Wizard|Online Scaffold")
 	bool IsReadableOutOfArenaRespawning() const { return bReplicatedOutOfArenaRespawning; }
+
+	void SetCauldronHazardMovementMultipliers(float FrictionMultiplier, float BrakingMultiplier, float SpeedMultiplier, float AccelerationMultiplier, float TurningMultiplier);
+	void SetCauldronBankingMovementMultipliers(bool bBanking, float SpeedMultiplier = 1.0f, float AccelerationMultiplier = 1.0f);
+	void SetCauldronVialEffectState(EWizardCauldronVialType ActiveVial, int32 VialCount, float SpeedMultiplier, float AccelerationMultiplier, float BonkKnockbackMultiplier, float InstabilityMultiplier = 1.0f);
+	EWizardCauldronVialType GetReadableActiveCauldronVial() const { return ReplicatedActiveCauldronVial; }
+	int32 GetReadableCauldronVialCount() const { return ReplicatedCauldronVialCount; }
+	float GetReadableCauldronVialInstabilityMultiplier() const { return ReplicatedCauldronVialInstabilityMultiplier; }
+	bool ApplyCauldronVialInstabilityStress(float InstabilityMultiplier, float& OutBaseStress, float& OutFinalStress);
+	void TriggerCauldronSlipperySkid(float SloshAlpha, float Duration, float MinimumImpulse, float MaximumImpulse);
+	bool UpdateCauldronSlipperySkid(float DeltaSeconds);
+	void ApplyCauldronSlipperyGlide(float DeltaSeconds, float Acceleration);
+	void ClearCauldronSlipperySkid();
+	void ApplyCauldronStickyTetherReel(float DeltaSeconds);
+	void SetCauldronStickyTetherState(bool bNewTethered, const FVector& AnchorLocation = FVector::ZeroVector);
+	void SetCauldronCurseState(bool bCursed, float RemainingTime);
+	void SetCauldronCurseVisualRelativeLocation(const FVector& RelativeLocation);
+	void AttachCauldronCurseOrbToLooseSegment(AActor* LooseSegment);
+	void DetachCauldronCurseOrbAtWorldLocation(const FVector& WorldLocation);
+	void ClearCauldronCurseOrbLooseSegmentAttachment();
+	void RefreshCauldronCurseOrbAttachment();
+	FVector GetCauldronCurseOrbWorldLocation() const;
+	bool IsCauldronCursed() const { return bReplicatedCauldronCursed; }
+	float GetCauldronCurseRemainingTime() const { return ReplicatedCauldronCurseRemainingTime; }
+	bool IsCauldronStickyTethered() const { return bReplicatedCauldronStickyTethered; }
+	bool IsCauldronBanking() const { return bReplicatedCauldronBanking; }
+	FVector GetCauldronStickyTetherAnchor() const { return ReplicatedCauldronStickyTetherAnchor; }
+	bool IsBroomBoostActive() const { return bBroomBoostActive || bReplicatedBroomBoostActive; }
 
 	UFUNCTION(BlueprintPure, Category = "Wizard|Online Scaffold")
 	float GetReadableOutOfArenaRespawnRemainingTime() const { return ReplicatedOutOfArenaRespawnRemainingTime; }
@@ -586,6 +618,8 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Wizard|Bonk")
 	float GetQuickBonkVisualDuration() const;
+
+	int32 GetAuthoritativeQuickBonkSequence() const { return AuthoritativeQuickBonkSequence; }
 
 	UFUNCTION(BlueprintPure, Category = "Wizard|Bonk")
 	bool CanQuickBonk() const;
@@ -707,6 +741,12 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wizard|Staff")
 	TObjectPtr<USceneComponent> StaffRoot;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wizard|Cauldron Catastrophe")
+	TObjectPtr<UStaticMeshComponent> CauldronCurseOrbMesh;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wizard|Cauldron Catastrophe")
+	TArray<TObjectPtr<UStaticMeshComponent>> CauldronCurseAuraMeshes;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wizard|Staff")
 	TObjectPtr<UWizardStaffComponent> StaffComponent;
 
@@ -827,6 +867,18 @@ public:
 	UPROPERTY(Replicated, VisibleInstanceOnly, BlueprintReadOnly, Category = "Wizard|Online Scaffold")
 	float ReplicatedMaxStaffStress = 100.0f;
 
+	UPROPERTY(ReplicatedUsing = OnRep_ReplicatedStaffSnapSequence, VisibleInstanceOnly, BlueprintReadOnly, Category = "Wizard|Online Scaffold")
+	int32 ReplicatedStaffSnapSequence = 0;
+
+	UPROPERTY(Replicated, VisibleInstanceOnly, BlueprintReadOnly, Category = "Wizard|Online Scaffold")
+	int32 ReplicatedLastSnapPlayerIndex = INDEX_NONE;
+
+	UPROPERTY(Replicated, VisibleInstanceOnly, BlueprintReadOnly, Category = "Wizard|Online Scaffold")
+	int32 ReplicatedLastSnapSegmentCountAfter = 0;
+
+	UPROPERTY(Replicated, VisibleInstanceOnly, BlueprintReadOnly, Category = "Wizard|Online Scaffold")
+	bool bReplicatedLastSnapWasMegaTemporarySegment = false;
+
 	UPROPERTY(ReplicatedUsing = OnRep_ReplicatedCarriedBrewReward, VisibleInstanceOnly, BlueprintReadOnly, Category = "Wizard|Online Scaffold")
 	EWizardBrewRewardType ReplicatedCarriedBrewReward = EWizardBrewRewardType::None;
 
@@ -881,6 +933,48 @@ public:
 	UPROPERTY(ReplicatedUsing = OnRep_ReplicatedPrototypeInputLocked, VisibleInstanceOnly, BlueprintReadOnly, Category = "Wizard|Online Scaffold")
 	bool bReplicatedPrototypeInputLocked = false;
 
+	UPROPERTY(ReplicatedUsing = OnRep_ReplicatedCauldronState, VisibleInstanceOnly, BlueprintReadOnly, Category = "Wizard|Cauldron Catastrophe")
+	bool bReplicatedCauldronCursed = false;
+
+	UPROPERTY(ReplicatedUsing = OnRep_ReplicatedCauldronState, VisibleInstanceOnly, BlueprintReadOnly, Category = "Wizard|Cauldron Catastrophe")
+	float ReplicatedCauldronCurseRemainingTime = 0.0f;
+
+	UPROPERTY(ReplicatedUsing = OnRep_ReplicatedCauldronState, VisibleInstanceOnly, BlueprintReadOnly, Category = "Wizard|Cauldron Catastrophe")
+	FVector ReplicatedCauldronCurseOrbRelativeLocation = FVector(0.0f, 0.0f, 135.0f);
+
+	UPROPERTY(ReplicatedUsing = OnRep_ReplicatedCauldronMovement, VisibleInstanceOnly, BlueprintReadOnly, Category = "Wizard|Cauldron Catastrophe")
+	FVector4 ReplicatedCauldronMovementMultipliers = FVector4(1.0f, 1.0f, 1.0f, 1.0f);
+
+	UPROPERTY(ReplicatedUsing = OnRep_ReplicatedCauldronMovement, VisibleInstanceOnly, BlueprintReadOnly, Category = "Wizard|Cauldron Catastrophe")
+	float ReplicatedCauldronTurningMultiplier = 1.0f;
+
+	UPROPERTY(ReplicatedUsing = OnRep_ReplicatedCauldronBanking, VisibleInstanceOnly, BlueprintReadOnly, Category = "Wizard|Cauldron Catastrophe")
+	bool bReplicatedCauldronBanking = false;
+
+	UPROPERTY(ReplicatedUsing = OnRep_ReplicatedCauldronBanking, VisibleInstanceOnly, BlueprintReadOnly, Category = "Wizard|Cauldron Catastrophe")
+	FVector2D ReplicatedCauldronBankingMovementMultipliers = FVector2D(1.0f, 1.0f);
+
+	UPROPERTY(ReplicatedUsing = OnRep_ReplicatedCauldronVialState, VisibleInstanceOnly, BlueprintReadOnly, Category = "Wizard|Cauldron Catastrophe")
+	EWizardCauldronVialType ReplicatedActiveCauldronVial = EWizardCauldronVialType::None;
+
+	UPROPERTY(ReplicatedUsing = OnRep_ReplicatedCauldronVialState, VisibleInstanceOnly, BlueprintReadOnly, Category = "Wizard|Cauldron Catastrophe")
+	int32 ReplicatedCauldronVialCount = 0;
+
+	UPROPERTY(ReplicatedUsing = OnRep_ReplicatedCauldronVialState, VisibleInstanceOnly, BlueprintReadOnly, Category = "Wizard|Cauldron Catastrophe")
+	FVector ReplicatedCauldronVialEffectMultipliers = FVector(1.0f, 1.0f, 1.0f);
+
+	UPROPERTY(ReplicatedUsing = OnRep_ReplicatedCauldronVialState, VisibleInstanceOnly, BlueprintReadOnly, Category = "Wizard|Cauldron Catastrophe")
+	float ReplicatedCauldronVialInstabilityMultiplier = 1.0f;
+
+	UPROPERTY(ReplicatedUsing = OnRep_ReplicatedCauldronStickyTether, VisibleInstanceOnly, BlueprintReadOnly, Category = "Wizard|Cauldron Catastrophe")
+	bool bReplicatedCauldronStickyTethered = false;
+
+	UPROPERTY(ReplicatedUsing = OnRep_ReplicatedCauldronStickyTether, VisibleInstanceOnly, BlueprintReadOnly, Category = "Wizard|Cauldron Catastrophe")
+	FVector ReplicatedCauldronStickyTetherAnchor = FVector::ZeroVector;
+
+	float CauldronSlipperySkidRemainingTime = 0.0f;
+	FVector CauldronSlipperySkidDirection = FVector::ZeroVector;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Wizard|Tuning")
 	FWizardBonkTuning BonkTuning;
 
@@ -933,6 +1027,9 @@ protected:
 	void OnRep_ReplicatedStaffStress();
 
 	UFUNCTION()
+	void OnRep_ReplicatedStaffSnapSequence();
+
+	UFUNCTION()
 	void OnRep_ReplicatedCarriedBrewReward();
 
 	UFUNCTION()
@@ -956,6 +1053,21 @@ protected:
 	UFUNCTION()
 	void OnRep_ReplicatedPrototypeInputLocked();
 
+	UFUNCTION()
+	void OnRep_ReplicatedCauldronState();
+
+	UFUNCTION()
+	void OnRep_ReplicatedCauldronMovement();
+
+	UFUNCTION()
+	void OnRep_ReplicatedCauldronVialState();
+
+	UFUNCTION()
+	void OnRep_ReplicatedCauldronBanking();
+
+	UFUNCTION()
+	void OnRep_ReplicatedCauldronStickyTether();
+
 	UFUNCTION(Server, Unreliable)
 	void ServerSetFacingYaw(float NewYaw);
 
@@ -964,6 +1076,9 @@ protected:
 
 	UFUNCTION(Server, Reliable)
 	void ServerRequestQuickBonk();
+
+	UFUNCTION(Server, Unreliable)
+	void ServerRequestStaffClashMash();
 
 	UFUNCTION(Server, Reliable)
 	void ServerRequestBroomBoost();
@@ -982,6 +1097,11 @@ protected:
 	float GetBroomBoostControlMultiplier() const;
 	bool IsPrototypeInputBlockedForLocalInput() const;
 	void UpdateSloshMovementSettings();
+	void UpdateCauldronCurseVisual(float DeltaSeconds);
+	void UpdateCauldronCurseAuraVisual(float DeltaSeconds);
+	void AttachCauldronCurseOrbToTopStaffSegment();
+	void UpdateCauldronStickyTether(float DeltaSeconds);
+	void UpdateCauldronStickyTetherVisual();
 	void UpdateSloshVisuals(float DeltaSeconds);
 	void UpdateBonkAttack(float DeltaSeconds);
 	void UpdateBonkVisual(float DeltaSeconds);
@@ -989,6 +1109,7 @@ protected:
 	int32 PerformQuickBonkHitDetection();
 	bool ApplyBonkToTarget(AWizardStaffWizardCharacter* TargetWizard);
 	void HandleQuickBonkRequestOnServer();
+	void HandleStaffClashMashRequestOnServer();
 	bool StartQuickBonkOnAuthority();
 	void SyncReplicatedQuickBonkStartFromAuthority(float VisualDuration);
 	void ClearQuickBonkState(bool bSyncReplicatedCancel);
@@ -1004,6 +1125,9 @@ protected:
 	void AddQuickBonkStressForHitCount(int32 HitCount, FName StressSource);
 	void PlayBonkHitFeedback(AWizardStaffWizardCharacter* TargetWizard, const FVector& KnockbackDirection) const;
 	void PlayBonkStressFeedback(float StressAdded, bool bSnapped, int32 HitCount) const;
+	void SyncReplicatedStaffSnapCueFromAuthority(int32 SegmentCountAfter, bool bWasMegaTemporarySegment);
+	void StartStaffSnapReadabilityCue(int32 SegmentCountAfter, bool bWasMegaTemporarySegment);
+	void ClearStaffSnapReadabilityCue(bool bClearReplicated);
 	bool FireArcanePinball();
 	bool SpawnArcanePinballReadabilityShell();
 	void UpdateSpellbookVisual();
@@ -1058,18 +1182,35 @@ private:
 	FLinearColor CurrentRobeColor = FLinearColor::White;
 	FLinearColor CurrentHatColor = FLinearColor::Black;
 	float LastQuickBonkTime = -1000.0f;
+	int32 AuthoritativeQuickBonkSequence = 0;
 	float QuickBonkVisualTimeRemaining = 0.0f;
 	float QuickBonkImpactTimeRemaining = 0.0f;
 	int32 QuickBonkHitCountThisSwing = 0;
 	bool bQuickBonkHitResolved = true;
 	TSet<AWizardStaffWizardCharacter*> QuickBonkHitWizardsThisSwing;
+	TSet<AWizardStaffCauldronIngredient*> QuickBonkHitIngredientsThisSwing;
+	TObjectPtr<UMaterialInstanceDynamic> CauldronCurseOrbMaterialInstance;
+	TObjectPtr<UMaterialInstanceDynamic> CauldronStickyTetherMaterialInstance;
+	bool bCauldronCurseOrbAttachedToLooseSegment = false;
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Wizard|Cauldron Catastrophe", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UStaticMeshComponent> CauldronStickyTetherMesh;
+
+	float DefaultCauldronGroundFriction = 8.0f;
+	float DefaultCauldronRotationRateYaw = 360.0f;
+	float StaffSnapCueTimeRemaining = 0.0f;
+	bool bLastStaffSnapCueWasMegaTemporarySegment = false;
+	int32 LastProcessedStaffSnapSequence = 0;
 	TWeakObjectPtr<AWizardStaffWizardCharacter> StaffClashOpponent;
 	FVector StaffClashLockedLocation = FVector::ZeroVector;
 	float StaffClashTimeRemaining = 0.0f;
 	int32 StaffClashMashCount = 0;
+	float LastNetworkStaffClashMashTime = -1000.0f;
 	bool bStaffClashActive = false;
 	bool bStaffClashResolver = false;
 	bool bPrototypeInputLocked = false;
+	float ServerFacingYawLastUpdateTime = -1.0f;
+	float ServerFacingYawTurnAllowanceDegrees = 30.0f;
 	FRotator StaffRootDefaultRelativeRotation = FRotator::ZeroRotator;
 	float BroomBoostTimeRemaining = 0.0f;
 	float BroomBoostLandingCooldownRemaining = 0.0f;

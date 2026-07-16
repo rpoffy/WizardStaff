@@ -1,0 +1,19 @@
+"AppBuild"
+{
+    "AppID" "4954290"
+    "Desc" "Wizard Staff Grand Wizard Favor leaderboard scaffold build 2026-07-11"
+
+    // Approved upload. This creates an inactive Steamworks build.
+    "Preview" "0"
+
+    "ContentRoot" "C:\\Users\\Roger\\Documents\\Wizard's Staff game\\Build\\SteamPipe\\content"
+    "BuildOutput" "C:\\Users\\Roger\\Documents\\Wizard's Staff game\\Build\\SteamPipe\\output"
+
+    // Deliberately empty: never assign a branch from this upload script.
+    "SetLive" ""
+
+    "Depots"
+    {
+        "4954291" "depot_build_4954291.vdf"
+    }
+}

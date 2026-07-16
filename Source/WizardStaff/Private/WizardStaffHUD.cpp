@@ -4,6 +4,7 @@
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerState.h"
 #include "WizardStaffComponent.h"
@@ -98,6 +99,18 @@ int32 GetHudStaffsAtDawnScore(const AWizardStaffGameMode* GameMode, const AWizar
 	return GameMode ? GameMode->GetStaffsAtDawnScore(PlayerIndex) : 0;
 }
 
+int32 GetHudCurrentTrialScore(const AWizardStaffGameMode* GameMode, const AWizardStaffWizardCharacter* Wizard, int32 PlayerIndex)
+{
+	if (const AWizardStaffPlayerState* WizardPlayerState = GetHudPlayerState(Wizard))
+	{
+		if (WizardPlayerState->GetWizardDisplaySlot() != INDEX_NONE)
+		{
+			return WizardPlayerState->GetCurrentTrialScore();
+		}
+	}
+	return GameMode ? GameMode->GetCauldronScore(PlayerIndex) : 0;
+}
+
 bool IsHudPartyHallReady(const AWizardStaffGameMode* GameMode, const AWizardStaffWizardCharacter* Wizard, int32 PlayerIndex)
 {
 	if (const AWizardStaffPlayerState* WizardPlayerState = GetHudPlayerState(Wizard))
@@ -137,15 +150,19 @@ FColor GetReplicatedGameplayEventHudColor(EWizardReplicatedGameplayEventType Eve
 	case EWizardReplicatedGameplayEventType::MegaStaffGranted:
 	case EWizardReplicatedGameplayEventType::MegaStaffExpired:
 		return FColor::Magenta;
+	case EWizardReplicatedGameplayEventType::StaffSegmentSnapped:
 	case EWizardReplicatedGameplayEventType::RingOutPending:
 		return FColor::Red;
 	case EWizardReplicatedGameplayEventType::RespawnComplete:
 	case EWizardReplicatedGameplayEventType::StaffClashStarted:
 		return FColor::Cyan;
 	case EWizardReplicatedGameplayEventType::StaffClashResolved:
+	case EWizardReplicatedGameplayEventType::CauldronIngredientDeposited:
 	case EWizardReplicatedGameplayEventType::GrandWizardCandidateChanged:
 	case EWizardReplicatedGameplayEventType::FinalWinner:
 		return FColor::Yellow;
+	case EWizardReplicatedGameplayEventType::CauldronCurse:
+		return FColor::Red;
 	case EWizardReplicatedGameplayEventType::RematchStarted:
 	case EWizardReplicatedGameplayEventType::MugPickup:
 	default:
@@ -396,7 +413,9 @@ void AWizardStaffHUD::DrawMatchHeader(float X, float Y)
 	const AWizardStaffGameMode* GameMode = GetWorld() ? GetWorld()->GetAuthGameMode<AWizardStaffGameMode>() : nullptr;
 	const float RemainingTime = GameMode && GameMode->GetActiveTrialType() == EWizardTrialType::StaffsAtDawn
 		? GameMode->GetStaffsAtDawnRemainingTime()
-		: (GameMode ? GameMode->GetMugRunRemainingTime() : 0.0f);
+		: (GameMode && GameMode->GetActiveTrialType() == EWizardTrialType::CauldronCatastrophe
+			? GameMode->GetCauldronRemainingTime()
+			: (GameMode ? GameMode->GetMugRunRemainingTime() : 0.0f));
 	FString HeaderText = GameMode
 		? FString::Printf(TEXT("%s  |  Time: %.0fs"), *GameMode->GetActiveTrialName(), RemainingTime)
 		: FString::Printf(TEXT("Mug Run  |  Time: %.0fs"), RemainingTime);
@@ -497,6 +516,15 @@ void AWizardStaffHUD::DrawPlayerRow(const AWizardStaffWizardCharacter* Wizard, f
 	{
 		PlayerText = FString::Printf(TEXT("P%d%s  Score: %d  Staff: %d  Favor: %d  Wins: %d%s"), PlayerIndex + 1, BotText, GetHudStaffsAtDawnScore(GameMode, Wizard, PlayerIndex), SegmentCount, Favor, RoundWins, TitleText);
 	}
+	else if ((GameMode && GameMode->GetActiveTrialType() == EWizardTrialType::CauldronCatastrophe)
+		|| (!GameMode && WizardGameState && WizardGameState->GetReplicatedActiveTrialType() == EWizardTrialType::CauldronCatastrophe))
+	{
+		const float InstabilityMultiplier = Wizard->GetReadableCauldronVialInstabilityMultiplier();
+		const FString InstabilityText = InstabilityMultiplier > 1.0f
+			? FString::Printf(TEXT("  Instability: %.2fx Stress"), InstabilityMultiplier)
+			: FString();
+		PlayerText = FString::Printf(TEXT("P%d%s  Vials: %d  %s%s  Staff: %d  Favor: %d  Wins: %d%s"), PlayerIndex + 1, BotText, Wizard->GetReadableCauldronVialCount(), *GetWizardCauldronVialDisplayName(Wizard->GetReadableActiveCauldronVial()), *InstabilityText, SegmentCount, Favor, RoundWins, TitleText);
+	}
 	DrawText(PlayerText, PlayerColor.ToFColor(true), X + 28.0f, Y - 1.0f, nullptr, TextScale);
 	DrawText(FString::Printf(TEXT("Reward: %s"), *Wizard->GetCarriedBrewRewardName()), FColor::Cyan, X + 310.0f, Y + 52.0f, nullptr, 0.72f * TextScale);
 
@@ -522,6 +550,7 @@ void AWizardStaffHUD::DrawCompactPlayerRows(const AWizardStaffGameMode* GameMode
 	const bool bInPartyHall = PartyState == EWizardPartyMatchState::PartyHall || PartyState == EWizardPartyMatchState::Intermission;
 	const bool bInFinalRound = PartyState == EWizardPartyMatchState::FinalRound;
 	const bool bStaffsAtDawn = TrialType == EWizardTrialType::StaffsAtDawn && TrialState != EWizardTrialState::WaitingToStart;
+	const bool bCauldronCatastrophe = TrialType == EWizardTrialType::CauldronCatastrophe && TrialState != EWizardTrialState::WaitingToStart;
 	const int32 StandingLeaderIndex = GameMode ? GameMode->GetCurrentStandingLeaderPlayerIndex() : INDEX_NONE;
 	const int32 FinalCandidateIndex = GameMode ? GameMode->GetGrandWizardCandidatePlayerIndex() : (WizardGameState ? WizardGameState->GetReplicatedFinalCandidateIndex() : INDEX_NONE);
 	const int32 FinalWinnerIndex = GameMode ? GameMode->GetGrandWizardWinnerPlayerIndex() : (WizardGameState ? WizardGameState->GetReplicatedFinalWinnerIndex() : INDEX_NONE);
@@ -565,6 +594,14 @@ void AWizardStaffHUD::DrawCompactPlayerRows(const AWizardStaffGameMode* GameMode
 		{
 			StatusTags += FString::Printf(TEXT(" MEGA %.0fs"), Wizard->GetMegaStaffRemainingTime());
 		}
+		if (Wizard->IsCauldronCursed())
+		{
+			StatusTags += FString::Printf(TEXT(" CURSED %.1fs"), Wizard->GetCauldronCurseRemainingTime());
+		}
+		if (bCauldronCatastrophe && Wizard->GetReadableCauldronVialInstabilityMultiplier() > 1.0f)
+		{
+			StatusTags += FString::Printf(TEXT(" INSTABILITY %.2fx"), Wizard->GetReadableCauldronVialInstabilityMultiplier());
+		}
 		if (IsHudPlaytestBot(Wizard))
 		{
 			StatusTags += TEXT(" BOT");
@@ -578,6 +615,10 @@ void AWizardStaffHUD::DrawCompactPlayerRows(const AWizardStaffGameMode* GameMode
 		if (bStaffsAtDawn)
 		{
 			PlayerText = FString::Printf(TEXT("P%d  Score %d  Staff %d  Favor %d  Wins %d%s"), PlayerIndex + 1, GetHudStaffsAtDawnScore(GameMode, Wizard, PlayerIndex), Wizard->GetStaffSegmentCount(), Favor, Wins, *StatusTags);
+		}
+		else if (bCauldronCatastrophe)
+		{
+			PlayerText = FString::Printf(TEXT("P%d  Vials %d %s  Staff %d  Favor %d  Wins %d%s"), PlayerIndex + 1, Wizard->GetReadableCauldronVialCount(), *GetWizardCauldronVialDisplayName(Wizard->GetReadableActiveCauldronVial()), Wizard->GetStaffSegmentCount(), Favor, Wins, *StatusTags);
 		}
 		if (!bMinimalRows && bHasReward)
 		{
@@ -650,6 +691,22 @@ void AWizardStaffHUD::DrawPlaytestEventPanel(const AWizardStaffGameMode* GameMod
 	{
 		AddLine(GameMode->GetStaffsAtDawnFeedbackMessage(), FColor::Orange);
 		AddLine(GameMode->GetGrandWizardFavorFeedbackMessage(), FColor::Green);
+	}
+	else if (TrialType == EWizardTrialType::CauldronCatastrophe && TrialState == EWizardTrialState::Active)
+	{
+		const int32 CursedPlayerIndex = GameMode ? GameMode->GetCauldronCursedPlayerIndex() : WizardGameState->GetReplicatedCauldronCursedPlayerIndex();
+		const float CurseTime = GameMode ? GameMode->GetCauldronCurseRemainingTime() : WizardGameState->GetReplicatedCauldronCurseRemainingTime();
+		const int32 BankingPlayerIndex = GameMode ? GameMode->GetCauldronBankingPlayerIndex() : WizardGameState->GetReplicatedCauldronBankingPlayerIndex();
+		const int32 BankingTransferredCount = GameMode ? GameMode->GetCauldronBankingTransferredCount() : WizardGameState->GetReplicatedCauldronBankingTransferredCount();
+		const float BankingProgressAlpha = GameMode ? GameMode->GetCauldronBankingProgressAlpha() : WizardGameState->GetReplicatedCauldronBankingProgressAlpha();
+		if (BankingPlayerIndex != INDEX_NONE)
+		{
+			AddLine(FString::Printf(TEXT("BANKING P%d  %d banked  %.0f%%"), BankingPlayerIndex + 1, BankingTransferredCount, BankingProgressAlpha * 100.0f), FColor::Yellow);
+		}
+		if (CursedPlayerIndex != INDEX_NONE)
+		{
+			AddLine(FString::Printf(TEXT("P%d CURSED %.1fs - bonk to pass"), CursedPlayerIndex + 1, CurseTime), FColor::Red);
+		}
 	}
 	else if (bInFinalRound)
 	{
@@ -830,6 +887,10 @@ void AWizardStaffHUD::DrawMinimalStatePanel(const AWizardStaffGameMode* GameMode
 		{
 			AddLine(GameMode->GetStaffsAtDawnFeedbackMessage(), FColor::Orange);
 		}
+		else if (GameMode->GetActiveTrialType() == EWizardTrialType::CauldronCatastrophe && GameMode->GetActiveTrialState() == EWizardTrialState::Active && GameMode->GetCauldronCursedPlayerIndex() != INDEX_NONE)
+		{
+			AddLine(FString::Printf(TEXT("P%d CURSED %.1fs"), GameMode->GetCauldronCursedPlayerIndex() + 1, GameMode->GetCauldronCurseRemainingTime()), FColor::Red);
+		}
 		else if (GameMode->GetPartyMatchState() == EWizardPartyMatchState::PartyHall || GameMode->GetPartyMatchState() == EWizardPartyMatchState::Intermission)
 		{
 			AddLine(FString::Printf(TEXT("Ready %d/%d"), GameMode->GetPartyHallReadyPlayerCount(), GetVisibleWizards().Num()), FColor::Cyan);
@@ -861,6 +922,17 @@ void AWizardStaffHUD::DrawMinimalStatePanel(const AWizardStaffGameMode* GameMode
 				}
 			}
 		}
+	else if (WizardGameState->GetReplicatedActiveTrialType() == EWizardTrialType::CauldronCatastrophe)
+	{
+		if (WizardGameState->GetReplicatedCauldronBankingPlayerIndex() != INDEX_NONE)
+		{
+			AddLine(FString::Printf(TEXT("BANKING P%d  %d  %.0f%%"), WizardGameState->GetReplicatedCauldronBankingPlayerIndex() + 1, WizardGameState->GetReplicatedCauldronBankingTransferredCount(), WizardGameState->GetReplicatedCauldronBankingProgressAlpha() * 100.0f), FColor::Yellow);
+		}
+		else if (WizardGameState->GetReplicatedCauldronCursedPlayerIndex() != INDEX_NONE)
+		{
+			AddLine(FString::Printf(TEXT("P%d CURSED %.1fs"), WizardGameState->GetReplicatedCauldronCursedPlayerIndex() + 1, WizardGameState->GetReplicatedCauldronCurseRemainingTime()), FColor::Red);
+		}
+	}
 	}
 	else
 	{
@@ -919,6 +991,14 @@ void AWizardStaffHUD::DrawScoringClarityPanel()
 		&& GameMode->GetActiveTrialType() == EWizardTrialType::StaffsAtDawn)
 	{
 		DrawStaffsAtDawnScorePanel(GameMode);
+		return;
+	}
+
+	if (PartyState == EWizardPartyMatchState::Trial
+		&& TrialState == EWizardTrialState::Active
+		&& GameMode->GetActiveTrialType() == EWizardTrialType::CauldronCatastrophe)
+	{
+		DrawCauldronScorePanel(GameMode);
 		return;
 	}
 
@@ -1058,6 +1138,50 @@ void AWizardStaffHUD::DrawStaffsAtDawnScorePanel(const AWizardStaffGameMode* Gam
 	}
 }
 
+void AWizardStaffHUD::DrawCauldronScorePanel(const AWizardStaffGameMode* GameMode)
+{
+	if (!GameMode)
+	{
+		return;
+	}
+
+	const TArray<const AWizardStaffWizardCharacter*> Wizards = GetVisibleWizards();
+	const float BoxWidth = 520.0f;
+	const FVector2D Origin = GetSidePanelOrigin(Wizards.Num(), BoxWidth);
+	const float LineHeight = 22.0f * TextScale;
+	const int32 BankingPlayerIndex = GameMode->GetCauldronBankingPlayerIndex();
+	const bool bBankingActive = BankingPlayerIndex != INDEX_NONE;
+	const float BoxHeight = (bBankingActive ? 98.0f : 76.0f) + (static_cast<float>(Wizards.Num()) * LineHeight);
+	DrawRect(FLinearColor(0.02f, 0.02f, 0.02f, 0.72f), Origin.X - 8.0f, Origin.Y - 6.0f, BoxWidth, BoxHeight);
+	DrawText(TEXT("Cauldron Catastrophe"), FColor::Yellow, Origin.X, Origin.Y, nullptr, 0.95f * TextScale);
+	const int32 CursedPlayerIndex = GameMode->GetCauldronCursedPlayerIndex();
+	const FString ObjectiveText = CursedPlayerIndex == INDEX_NONE
+		? TEXT("Quick Bonk the cauldron to bank your newest vials")
+		: FString::Printf(TEXT("P%d CURSED %.1fs - bonk another wizard to pass"), CursedPlayerIndex + 1, GameMode->GetCauldronCurseRemainingTime());
+	DrawText(ObjectiveText, CursedPlayerIndex == INDEX_NONE ? FColor::White : FColor::Red, Origin.X, Origin.Y + LineHeight, nullptr, 0.76f * TextScale);
+	if (bBankingActive)
+	{
+		DrawText(FString::Printf(TEXT("Banking: P%d  Transferred: %d  Next: %.0f%%"), BankingPlayerIndex + 1, GameMode->GetCauldronBankingTransferredCount(), GameMode->GetCauldronBankingProgressAlpha() * 100.0f), FColor::Yellow, Origin.X, Origin.Y + (LineHeight * 1.9f), nullptr, 0.70f * TextScale);
+	}
+
+	float RowY = Origin.Y + (LineHeight * (bBankingActive ? 3.25f : 2.25f));
+	for (const AWizardStaffWizardCharacter* Wizard : Wizards)
+	{
+		if (!Wizard)
+		{
+			continue;
+		}
+		const int32 PlayerIndex = GetHudPlayerIndex(GameMode, Wizard);
+		const FColor PlayerColor = AWizardStaffWizardCharacter::GetPrototypePlayerColor(PlayerIndex).ToFColor(true);
+		const float InstabilityMultiplier = Wizard->GetReadableCauldronVialInstabilityMultiplier();
+		const FString InstabilityText = InstabilityMultiplier > 1.0f
+			? FString::Printf(TEXT("  Instability %.2fx Stress"), InstabilityMultiplier)
+			: FString();
+		DrawText(FString::Printf(TEXT("P%d  Banked %d  Vials %d  Active %s%s%s"), PlayerIndex + 1, GameMode->GetCauldronScore(PlayerIndex), Wizard->GetReadableCauldronVialCount(), *GetWizardCauldronVialDisplayName(Wizard->GetReadableActiveCauldronVial()), *InstabilityText, PlayerIndex == CursedPlayerIndex ? TEXT("  CURSED") : TEXT("")), PlayerColor, Origin.X, RowY, nullptr, 0.76f * TextScale);
+		RowY += LineHeight;
+	}
+}
+
 void AWizardStaffHUD::DrawTrialResultsPanel(const AWizardStaffGameMode* GameMode)
 {
 	if (!GameMode)
@@ -1073,9 +1197,10 @@ void AWizardStaffHUD::DrawTrialResultsPanel(const AWizardStaffGameMode* GameMode
 	const bool bHasFavorFeedback = !FavorFeedback.IsEmpty();
 	const float BoxHeight = (bHasFavorFeedback ? 94.0f : 72.0f) + (static_cast<float>(Wizards.Num()) * LineHeight);
 	const bool bStaffsAtDawnResults = GameMode->GetActiveTrialType() == EWizardTrialType::StaffsAtDawn;
+	const bool bCauldronResults = GameMode->GetActiveTrialType() == EWizardTrialType::CauldronCatastrophe;
 
 	DrawRect(FLinearColor(0.02f, 0.02f, 0.02f, 0.80f), Origin.X - 8.0f, Origin.Y - 6.0f, BoxWidth, BoxHeight);
-	DrawText(bStaffsAtDawnResults ? TEXT("Staffs at Dawn Results") : TEXT("Trial Results"), FColor::Yellow, Origin.X, Origin.Y, nullptr, 0.95f * TextScale);
+	DrawText(bStaffsAtDawnResults ? TEXT("Staffs at Dawn Results") : (bCauldronResults ? TEXT("Cauldron Catastrophe Results") : TEXT("Trial Results")), FColor::Yellow, Origin.X, Origin.Y, nullptr, 0.95f * TextScale);
 	DrawText(GameMode->GetMugRunWinnerMessage(), FColor::White, Origin.X, Origin.Y + LineHeight, nullptr, 0.76f * TextScale);
 
 	float RowY = Origin.Y + (LineHeight * 2.25f);
@@ -1096,7 +1221,9 @@ void AWizardStaffHUD::DrawTrialResultsPanel(const AWizardStaffGameMode* GameMode
 		const FColor PlayerColor = AWizardStaffWizardCharacter::GetPrototypePlayerColor(PlayerIndex).ToFColor(true);
 		const FString PlayerText = bStaffsAtDawnResults
 			? FString::Printf(TEXT("P%d  Score %d  Staff %d  Favor %d  Round Wins %d"), PlayerIndex + 1, GameMode->GetStaffsAtDawnScore(PlayerIndex), Wizard->GetStaffSegmentCount(), GameMode->GetPlayerGrandWizardFavor(PlayerIndex), GameMode->GetPlayerRoundWins(PlayerIndex))
-			: FString::Printf(TEXT("P%d  Staff %d  Favor %d  Round Wins %d"), PlayerIndex + 1, Wizard->GetStaffSegmentCount(), GameMode->GetPlayerGrandWizardFavor(PlayerIndex), GameMode->GetPlayerRoundWins(PlayerIndex));
+			: (bCauldronResults
+				? FString::Printf(TEXT("P%d  Banked %d  Staff %d  Favor %d  Round Wins %d"), PlayerIndex + 1, GameMode->GetCauldronScore(PlayerIndex), Wizard->GetStaffSegmentCount(), GameMode->GetPlayerGrandWizardFavor(PlayerIndex), GameMode->GetPlayerRoundWins(PlayerIndex))
+				: FString::Printf(TEXT("P%d  Staff %d  Favor %d  Round Wins %d"), PlayerIndex + 1, Wizard->GetStaffSegmentCount(), GameMode->GetPlayerGrandWizardFavor(PlayerIndex), GameMode->GetPlayerRoundWins(PlayerIndex)));
 		DrawText(PlayerText, PlayerColor, Origin.X, RowY, nullptr, 0.76f * TextScale);
 		RowY += LineHeight;
 	}
@@ -1486,20 +1613,39 @@ TArray<const AWizardStaffWizardCharacter*> AWizardStaffHUD::GetVisibleWizards() 
 		return Wizards;
 	}
 
-	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+	if (World->GetNetMode() == NM_Client)
 	{
-		const APlayerController* PlayerController = It->Get();
-		if (!PlayerController)
+		for (TActorIterator<AWizardStaffWizardCharacter> It(World); It; ++It)
 		{
-			continue;
-		}
-
-		const AWizardStaffWizardCharacter* Wizard = Cast<AWizardStaffWizardCharacter>(PlayerController->GetPawn());
-		if (Wizard)
-		{
-			Wizards.Add(Wizard);
+			const AWizardStaffWizardCharacter* Wizard = *It;
+			if (IsValid(Wizard) && Wizard->GetPlayerState<AWizardStaffPlayerState>())
+			{
+				Wizards.Add(Wizard);
+			}
 		}
 	}
+	else
+	{
+		for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+		{
+			const APlayerController* PlayerController = It->Get();
+			if (!PlayerController)
+			{
+				continue;
+			}
+
+			const AWizardStaffWizardCharacter* Wizard = Cast<AWizardStaffWizardCharacter>(PlayerController->GetPawn());
+			if (Wizard)
+			{
+				Wizards.Add(Wizard);
+			}
+		}
+	}
+
+	Wizards.Sort([](const AWizardStaffWizardCharacter& Left, const AWizardStaffWizardCharacter& Right)
+	{
+		return GetHudPlayerIndex(nullptr, &Left) < GetHudPlayerIndex(nullptr, &Right);
+	});
 
 	return Wizards;
 }
@@ -1582,6 +1728,6 @@ FString AWizardStaffHUD::GetTimerText(const AWizardStaffGameMode* GameMode) cons
 
 	const float RemainingTime = GameMode->GetActiveTrialType() == EWizardTrialType::StaffsAtDawn
 		? GameMode->GetStaffsAtDawnRemainingTime()
-		: GameMode->GetMugRunRemainingTime();
+		: (GameMode->GetActiveTrialType() == EWizardTrialType::CauldronCatastrophe ? GameMode->GetCauldronRemainingTime() : GameMode->GetMugRunRemainingTime());
 	return FString::Printf(TEXT("Time %.0fs"), RemainingTime);
 }

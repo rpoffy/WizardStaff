@@ -1,0 +1,22 @@
+"AppBuild"
+{
+    "AppID" "<REAL_APP_ID>"
+    "Desc" "Wizard's Staff private Windows smoke build"
+
+    // Safety default: preview builds generate manifests/logs but do not upload content.
+    // Change this to "0" only after Steamworks onboarding, app, depot, package,
+    // and private branch/tester access are ready.
+    "Preview" "1"
+
+    "ContentRoot" "<STEAMPIPE_CONTENT_ROOT>"
+    "BuildOutput" "<STEAMPIPE_CONTENT_ROOT>\\..\\output"
+
+    // Keep empty for prep. Do not set a branch live from this template.
+    // Later, after creating a private beta branch, replace with "<BETA_BRANCH_NAME>" only intentionally.
+    "SetLive" ""
+
+    "Depots"
+    {
+        "<WINDOWS_DEPOT_ID>" "depot_build_windows_template.vdf"
+    }
+}

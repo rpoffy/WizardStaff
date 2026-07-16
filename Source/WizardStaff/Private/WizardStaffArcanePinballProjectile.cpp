@@ -353,6 +353,15 @@ bool AWizardStaffArcanePinballProjectile::CanHitWizard(AWizardStaffWizardCharact
 
 int32 AWizardStaffArcanePinballProjectile::GetWizardPlayerIndex(const AWizardStaffWizardCharacter* Wizard) const
 {
+	if (const AWizardStaffGameMode* GameMode = GetWorld() ? GetWorld()->GetAuthGameMode<AWizardStaffGameMode>() : nullptr)
+	{
+		const int32 AssignedPlayerIndex = GameMode->GetPlayerIndexForWizard(Wizard);
+		if (AssignedPlayerIndex != INDEX_NONE)
+		{
+			return AssignedPlayerIndex;
+		}
+	}
+
 	const APlayerState* PlayerState = Wizard ? Wizard->GetPlayerState() : nullptr;
 	return PlayerState ? FMath::Max(PlayerState->GetPlayerId(), 0) : 0;
 }

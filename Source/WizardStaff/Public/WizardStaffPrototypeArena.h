@@ -17,6 +17,11 @@ class WIZARDSTAFF_API AWizardStaffPrototypeArena : public AActor
 public:
 	AWizardStaffPrototypeArena();
 
+	virtual void BeginPlay() override;
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
+	void SetPhasePresentationActive(bool bActive);
+
 	UFUNCTION(BlueprintCallable, Category = "Prototype Arena|Spawns")
 	bool GetPlayerSpawnTransform(int32 PlayerIndex, int32 PlayerCount, FTransform& OutTransform) const;
 
@@ -48,7 +53,14 @@ public:
 	TObjectPtr<UStaticMesh> BlockMeshAsset;
 
 protected:
+	UFUNCTION()
+	void OnRep_PhasePresentationActive();
+
+	void ApplyPhasePresentationState();
 	UStaticMeshComponent* CreateBlockComponent(FName Name, const FVector& RelativeLocation, const FVector& RelativeScale);
 	UArrowComponent* CreateSpawnMarker(FName Name, const FVector& RelativeLocation, const FRotator& RelativeRotation, const FColor& Color, float ArrowSize);
 	void GatherSpawnMarkers(const FString& NamePrefix, TArray<UArrowComponent*>& OutMarkers) const;
+
+	UPROPERTY(ReplicatedUsing = OnRep_PhasePresentationActive, VisibleInstanceOnly, BlueprintReadOnly, Category = "Prototype Arena|Phase")
+	bool bReplicatedPhasePresentationActive = true;
 };

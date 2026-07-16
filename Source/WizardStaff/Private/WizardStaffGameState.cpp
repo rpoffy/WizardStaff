@@ -6,6 +6,27 @@ namespace
 {
 constexpr int32 MaxReplicatedGameplayEvents = 8;
 constexpr int32 MaxReplicatedGameplayEventTextLength = 96;
+constexpr float ReplicatedTimerMinimumDelta = 0.1f;
+constexpr float ReplicatedProgressMinimumDelta = 0.01f;
+
+template <typename TValue>
+void AssignMirrorIfChanged(TValue& CurrentValue, const TValue& NewValue)
+{
+	if (CurrentValue != NewValue)
+	{
+		CurrentValue = NewValue;
+	}
+}
+
+void AssignFloatMirrorIfMeaningfullyChanged(float& CurrentValue, float NewValue, float MinimumDelta)
+{
+	const float SafeNewValue = FMath::IsFinite(NewValue) ? NewValue : 0.0f;
+	const bool bEndpointChanged = (CurrentValue == 0.0f) != (SafeNewValue == 0.0f);
+	if (bEndpointChanged || FMath::Abs(CurrentValue - SafeNewValue) >= MinimumDelta)
+	{
+		CurrentValue = SafeNewValue;
+	}
+}
 }
 
 AWizardStaffGameState::AWizardStaffGameState()
@@ -27,6 +48,12 @@ void AWizardStaffGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 	DOREPLIFETIME(AWizardStaffGameState, ReplicatedTrialResultsRemainingTime);
 	DOREPLIFETIME(AWizardStaffGameState, ReplicatedIntermissionRemainingTime);
 	DOREPLIFETIME(AWizardStaffGameState, ReplicatedFinalRoundRemainingTime);
+	DOREPLIFETIME(AWizardStaffGameState, ReplicatedCauldronRemainingTime);
+	DOREPLIFETIME(AWizardStaffGameState, ReplicatedCauldronCursedPlayerIndex);
+	DOREPLIFETIME(AWizardStaffGameState, ReplicatedCauldronCurseRemainingTime);
+	DOREPLIFETIME(AWizardStaffGameState, ReplicatedCauldronBankingPlayerIndex);
+	DOREPLIFETIME(AWizardStaffGameState, ReplicatedCauldronBankingTransferredCount);
+	DOREPLIFETIME(AWizardStaffGameState, ReplicatedCauldronBankingProgressAlpha);
 	DOREPLIFETIME(AWizardStaffGameState, ReplicatedCompletedTrialCount);
 	DOREPLIFETIME(AWizardStaffGameState, ReplicatedFinalCandidateIndex);
 	DOREPLIFETIME(AWizardStaffGameState, ReplicatedFinalWinnerIndex);
@@ -54,6 +81,11 @@ void AWizardStaffGameState::SetMatchStateMirror(
 	float NewFinalStealProgressAlpha,
 	const FString& NewResultMessage)
 {
+	if (!HasAuthority())
+	{
+		return;
+	}
+
 	const bool bFinalActive = NewPartyMatchState == EWizardPartyMatchState::FinalRound
 		&& NewActiveTrialState == EWizardTrialState::Active
 		&& NewFinalWinnerIndex == INDEX_NONE;
@@ -77,17 +109,17 @@ void AWizardStaffGameState::SetMatchStateMirror(
 		|| PreviousStealProgressBucket != NewStealProgressBucket
 		|| ReplicatedResultMessage != NewResultMessage;
 
-	ReplicatedPartyMatchState = NewPartyMatchState;
-	ReplicatedActiveTrialState = NewActiveTrialState;
-	ReplicatedActiveTrialType = NewActiveTrialType;
-	ReplicatedActiveTuningPreset = NewActiveTuningPreset;
-	ReplicatedCompletedTrialCount = NewCompletedTrialCount;
-	ReplicatedFinalCandidateIndex = NewFinalCandidateIndex;
-	ReplicatedFinalWinnerIndex = NewFinalWinnerIndex;
-	bReplicatedFinalCandidateVulnerable = bSafeFinalCandidateVulnerable;
-	ReplicatedFinalStealingPlayerIndex = SafeFinalStealingPlayerIndex;
-	ReplicatedFinalStealProgressAlpha = SafeFinalStealProgressAlpha;
-	ReplicatedResultMessage = NewResultMessage;
+	AssignMirrorIfChanged(ReplicatedPartyMatchState, NewPartyMatchState);
+	AssignMirrorIfChanged(ReplicatedActiveTrialState, NewActiveTrialState);
+	AssignMirrorIfChanged(ReplicatedActiveTrialType, NewActiveTrialType);
+	AssignMirrorIfChanged(ReplicatedActiveTuningPreset, NewActiveTuningPreset);
+	AssignMirrorIfChanged(ReplicatedCompletedTrialCount, NewCompletedTrialCount);
+	AssignMirrorIfChanged(ReplicatedFinalCandidateIndex, NewFinalCandidateIndex);
+	AssignMirrorIfChanged(ReplicatedFinalWinnerIndex, NewFinalWinnerIndex);
+	AssignMirrorIfChanged(bReplicatedFinalCandidateVulnerable, bSafeFinalCandidateVulnerable);
+	AssignMirrorIfChanged(ReplicatedFinalStealingPlayerIndex, SafeFinalStealingPlayerIndex);
+	AssignFloatMirrorIfMeaningfullyChanged(ReplicatedFinalStealProgressAlpha, SafeFinalStealProgressAlpha, ReplicatedProgressMinimumDelta);
+	AssignMirrorIfChanged(ReplicatedResultMessage, NewResultMessage);
 	if (bFinalReadableChanged)
 	{
 		++ReplicatedFinalReadableSequence;
@@ -102,12 +134,44 @@ void AWizardStaffGameState::SetTimerMirror(
 	float NewIntermissionRemainingTime,
 	float NewFinalRoundRemainingTime)
 {
-	ReplicatedMugRunRemainingTime = NewMugRunRemainingTime;
-	ReplicatedStaffsAtDawnRemainingTime = NewStaffsAtDawnRemainingTime;
-	ReplicatedTrialCountdownRemainingTime = NewTrialCountdownRemainingTime;
-	ReplicatedTrialResultsRemainingTime = NewTrialResultsRemainingTime;
-	ReplicatedIntermissionRemainingTime = NewIntermissionRemainingTime;
-	ReplicatedFinalRoundRemainingTime = NewFinalRoundRemainingTime;
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	AssignFloatMirrorIfMeaningfullyChanged(ReplicatedMugRunRemainingTime, FMath::Max(NewMugRunRemainingTime, 0.0f), ReplicatedTimerMinimumDelta);
+	AssignFloatMirrorIfMeaningfullyChanged(ReplicatedStaffsAtDawnRemainingTime, FMath::Max(NewStaffsAtDawnRemainingTime, 0.0f), ReplicatedTimerMinimumDelta);
+	AssignFloatMirrorIfMeaningfullyChanged(ReplicatedTrialCountdownRemainingTime, FMath::Max(NewTrialCountdownRemainingTime, 0.0f), ReplicatedTimerMinimumDelta);
+	AssignFloatMirrorIfMeaningfullyChanged(ReplicatedTrialResultsRemainingTime, FMath::Max(NewTrialResultsRemainingTime, 0.0f), ReplicatedTimerMinimumDelta);
+	AssignFloatMirrorIfMeaningfullyChanged(ReplicatedIntermissionRemainingTime, FMath::Max(NewIntermissionRemainingTime, 0.0f), ReplicatedTimerMinimumDelta);
+	AssignFloatMirrorIfMeaningfullyChanged(ReplicatedFinalRoundRemainingTime, FMath::Max(NewFinalRoundRemainingTime, 0.0f), ReplicatedTimerMinimumDelta);
+}
+
+void AWizardStaffGameState::SetCauldronMirror(float NewRemainingTime, int32 NewCursedPlayerIndex, float NewCurseRemainingTime, int32 NewBankingPlayerIndex, int32 NewBankingTransferredCount, float NewBankingProgressAlpha)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	const bool bCauldronActive = ReplicatedPartyMatchState == EWizardPartyMatchState::Trial
+		&& ReplicatedActiveTrialState == EWizardTrialState::Active
+		&& ReplicatedActiveTrialType == EWizardTrialType::CauldronCatastrophe;
+	const float SafeRemainingTime = bCauldronActive ? FMath::Max(NewRemainingTime, 0.0f) : 0.0f;
+	const int32 SafeCursedPlayerIndex = bCauldronActive ? NewCursedPlayerIndex : INDEX_NONE;
+	const float SafeCurseRemainingTime = SafeCursedPlayerIndex == INDEX_NONE
+		? 0.0f
+		: FMath::Max(NewCurseRemainingTime, 0.0f);
+	const int32 SafeBankingPlayerIndex = bCauldronActive ? NewBankingPlayerIndex : INDEX_NONE;
+	const int32 SafeBankingTransferredCount = SafeBankingPlayerIndex == INDEX_NONE ? 0 : FMath::Max(NewBankingTransferredCount, 0);
+	const float SafeBankingProgressAlpha = SafeBankingPlayerIndex == INDEX_NONE ? 0.0f : FMath::Clamp(NewBankingProgressAlpha, 0.0f, 1.0f);
+
+	AssignFloatMirrorIfMeaningfullyChanged(ReplicatedCauldronRemainingTime, SafeRemainingTime, ReplicatedTimerMinimumDelta);
+	AssignMirrorIfChanged(ReplicatedCauldronCursedPlayerIndex, SafeCursedPlayerIndex);
+	AssignFloatMirrorIfMeaningfullyChanged(ReplicatedCauldronCurseRemainingTime, SafeCurseRemainingTime, ReplicatedTimerMinimumDelta);
+	AssignMirrorIfChanged(ReplicatedCauldronBankingPlayerIndex, SafeBankingPlayerIndex);
+	AssignMirrorIfChanged(ReplicatedCauldronBankingTransferredCount, SafeBankingTransferredCount);
+	AssignFloatMirrorIfMeaningfullyChanged(ReplicatedCauldronBankingProgressAlpha, SafeBankingProgressAlpha, ReplicatedProgressMinimumDelta);
 }
 
 void AWizardStaffGameState::IncrementMatchSessionGeneration()
@@ -154,6 +218,11 @@ void AWizardStaffGameState::ClearReplicatedGameplayEvents()
 		return;
 	}
 
+	if (ReplicatedGameplayEvents.IsEmpty())
+	{
+		return;
+	}
+
 	ReplicatedGameplayEvents.Reset();
 	++ReplicatedGameplayEventSequence;
 	ForceNetUpdate();
@@ -166,7 +235,7 @@ void AWizardStaffGameState::SetPrototypeSessionModeMirror(EWizardPrototypeSessio
 		return;
 	}
 
-	ReplicatedPrototypeSessionMode = NewPrototypeSessionMode;
+	AssignMirrorIfChanged(ReplicatedPrototypeSessionMode, NewPrototypeSessionMode);
 }
 
 EWizardPrototypeSessionMode AWizardStaffGameState::GetObservedPrototypeSessionMode() const
@@ -270,9 +339,16 @@ float AWizardStaffGameState::GetActiveReplicatedTimer() const
 		return ReplicatedTrialResultsRemainingTime;
 	}
 
-	return ReplicatedActiveTrialType == EWizardTrialType::StaffsAtDawn
-		? ReplicatedStaffsAtDawnRemainingTime
-		: ReplicatedMugRunRemainingTime;
+	switch (ReplicatedActiveTrialType)
+	{
+	case EWizardTrialType::StaffsAtDawn:
+		return ReplicatedStaffsAtDawnRemainingTime;
+	case EWizardTrialType::CauldronCatastrophe:
+		return ReplicatedCauldronRemainingTime;
+	case EWizardTrialType::MugRun:
+	default:
+		return ReplicatedMugRunRemainingTime;
+	}
 }
 
 FString AWizardStaffGameState::GetReplicatedPartyMatchStateText() const
@@ -315,9 +391,16 @@ FString AWizardStaffGameState::GetReplicatedActiveTrialStateText() const
 
 FString AWizardStaffGameState::GetReplicatedActiveTrialName() const
 {
-	return ReplicatedActiveTrialType == EWizardTrialType::StaffsAtDawn
-		? TEXT("Staffs at Dawn")
-		: TEXT("Mug Run");
+	switch (ReplicatedActiveTrialType)
+	{
+	case EWizardTrialType::StaffsAtDawn:
+		return TEXT("Staffs at Dawn");
+	case EWizardTrialType::CauldronCatastrophe:
+		return TEXT("Cauldron Catastrophe");
+	case EWizardTrialType::MugRun:
+	default:
+		return TEXT("Mug Run");
+	}
 }
 
 FString AWizardStaffGameState::GetReplicatedTuningPresetText() const

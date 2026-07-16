@@ -134,7 +134,7 @@ void AWizardStaffManaMugPickup::Collect(AWizardStaffWizardCharacter* CollectingW
 		return;
 	}
 
-	CollectingWizard->DrinkMug();
+	CollectingWizard->ApplyCollectedMugReward();
 	if (UWorld* World = GetWorld())
 	{
 		if (AWizardStaffGameMode* GameMode = World->GetAuthGameMode<AWizardStaffGameMode>())

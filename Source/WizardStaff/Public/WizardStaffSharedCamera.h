@@ -60,7 +60,13 @@ public:
 	float FollowLerpSpeed = 5.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera", meta = (ClampMin = "0.0"))
+	float PhaseTransitionSnapDistance = 1800.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera", meta = (ClampMin = "0.0"))
 	float ZoomLerpSpeed = 4.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera|Ring Out")
+	float PendingRespawnIgnoreBelowZ = 0.0f;
 
 protected:
 	void ApplyToLocalPlayerControllers();

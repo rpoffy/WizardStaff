@@ -1,0 +1,19 @@
+"AppBuild"
+{
+    "AppID" "4954290"
+    "Desc" "Wizard Staff private Windows smoke build"
+
+    // Safety default: validate manifests and paths without uploading content.
+    "Preview" "1"
+
+    "ContentRoot" "C:\\Users\\Roger\\Documents\\Wizard's Staff game\\Build\\SteamPipe\\content"
+    "BuildOutput" "C:\\Users\\Roger\\Documents\\Wizard's Staff game\\Build\\SteamPipe\\output"
+
+    // Deliberately empty. Branch assignment is a separate manual Steamworks step.
+    "SetLive" ""
+
+    "Depots"
+    {
+        "4954291" "depot_build_4954291.vdf"
+    }
+}

@@ -136,10 +136,13 @@ void AWizardStaffPartyHall::BeginPlay()
 		ReadyBellDefaultScale = ReadyBellMesh->GetRelativeScale3D();
 	}
 
-	for (UStaticMeshComponent* PropMesh : PhysicsPropMeshes)
+	for (int32 PropIndex = 0; PropIndex < PhysicsPropMeshes.Num(); ++PropIndex)
 	{
+		UStaticMeshComponent* PropMesh = PhysicsPropMeshes[PropIndex];
 		if (PropMesh)
 		{
+			const float MassOverride = PhysicsPropMassOverrides.IsValidIndex(PropIndex) ? PhysicsPropMassOverrides[PropIndex] : 9.0f;
+			PropMesh->SetMassOverrideInKg(NAME_None, MassOverride, true);
 			PropMesh->SetSimulatePhysics(true);
 			PropMesh->SetLinearDamping(0.6f);
 			PropMesh->SetAngularDamping(0.9f);
@@ -274,9 +277,9 @@ UStaticMeshComponent* AWizardStaffPartyHall::CreatePhysicsPropComponent(FName Na
 	PropComponent->SetRelativeScale3D(RelativeScale);
 	PropComponent->SetCollisionProfileName(UCollisionProfile::BlockAll_ProfileName);
 	PropComponent->SetCanEverAffectNavigation(false);
-	PropComponent->SetMassOverrideInKg(NAME_None, bUseCylinderMesh ? 14.0f : 9.0f, true);
 	PropComponent->SetStaticMesh((bUseCylinderMesh && CylinderMeshAsset) ? CylinderMeshAsset : BlockMeshAsset);
 	PhysicsPropMeshes.Add(PropComponent);
+	PhysicsPropMassOverrides.Add(bUseCylinderMesh ? 14.0f : 9.0f);
 	return PropComponent;
 }
 

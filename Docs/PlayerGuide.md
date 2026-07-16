@@ -1,6 +1,6 @@
 # Wizard's Staff Player Guide
 
-Last updated: July 2, 2026
+**Last Updated:** 2026-07-15
 
 Wizard's Staff is a local multiplayer physics party game about goofy wizards building huge, awkward magical staffs and bonking each other with them.
 
@@ -12,16 +12,7 @@ Become the Grand Wizard.
 
 Each match is made of short Trials followed by the Grand Wizard Final. Trials help you earn advantage, grow your staff, win rounds, and build Grand Wizard Favor. At the end, the Final decides the whole match.
 
-The current prototype match is:
-
-1. Party Hall.
-2. Mug Run.
-3. Results.
-4. Party Hall.
-5. Staffs at Dawn.
-6. Results.
-7. Grand Wizard Final.
-8. Winner and rematch.
+The current prototype match is Party Hall -> Mug Run -> Party Hall -> Staffs at Dawn -> Party Hall -> Cauldron Catastrophe -> Party Hall -> Grand Wizard Final -> rematch. Each Trial briefly shows Results before returning players to Party Hall.
 
 ## The Big Idea
 
@@ -143,6 +134,20 @@ Mega Staff Brew is the current Staffs at Dawn powerup.
 It temporarily gives you a huge staff. You gain scary reach and power, but you also become easier to punish because the staff is heavier, more fragile, harder to recover with, and easier to wedge.
 
 Mega Staff Brew is meant to create a short panic moment, not a safe super mode.
+
+### Cauldron Catastrophe
+
+Cauldron Catastrophe is a risk-and-banking Trial in an open octagonal arena.
+
+- Collect cyan Speed and orange Burdening Power vials; each becomes a staff segment.
+- Only the newest carried vial effect is active.
+- Quick Bonk the currently glowing gold cauldron intake to bank eligible top vial segments one at a time.
+- Each banked vial awards one point, but banking slows and commits you long enough to be interrupted.
+- Ring-outs can spill newest unbanked vials as neutral pickups.
+- Speed deposits can create slippery puddles; Burdening Power deposits can create sticky sludge.
+- A cursed orb appears on a wizard's top staff segment. Pass it by bonking another wizard, survive its explosion, or risk feeding it to the active cauldron intake.
+
+The player with the most safely banked vials wins the Trial. Carrying more vial segments gives more length and effects, but also makes enemy bonks more stressful for the staff.
 
 ### Grand Wizard Final
 

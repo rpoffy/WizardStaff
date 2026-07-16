@@ -3,6 +3,14 @@ Binaries/
 DerivedDataCache/
 Intermediate/
 Saved/
+Build/Package/
+Build/Windows/FileOpenOrder/
+Build/*.log
+Build/*.json
+Build/SteamPipe/content/windows/*
+!Build/SteamPipe/content/windows/.gitkeep
+Build/SteamPipe/output/*
+!Build/SteamPipe/output/.gitkeep
 
 # IDE and build metadata
 .vs/
@@ -16,3 +24,6 @@ Saved/
 # Local UnrealBuildTool logs from manual verification builds
 WizardStaff_UBT*.log
 WizardStaff_UBT.json
+
+# Steam local bootstrap file; the real AppID is configured in DefaultEngine.ini.
+steam_appid.txt
