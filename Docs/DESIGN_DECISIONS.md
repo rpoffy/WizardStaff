@@ -1,6 +1,6 @@
 # Design Decisions
 
-**Last Updated:** 2026-07-15
+**Last Updated:** 2026-07-16
 
 This file records durable choices, not implementation chronology. Current evidence belongs in [CURRENT_STATE.md](CURRENT_STATE.md).
 
@@ -24,6 +24,7 @@ This file records durable choices, not implementation chronology. Current eviden
 | Slippery puddles create a bounded Slosh-scaled skid | Server applies forward impulse and short low-friction carry-out without changing base Slosh or unrelated movement tuning. |
 | Long-staff banking stays intentional | Validate server-confirmed Bonks against closest staff collision point while preserving active-side and bounded hold-range rules. |
 | Cursed holder can feed the active intake | A server-confirmed intake Bonk creates eight telegraphed server blasts at 75% normal curse force. Jittered angular sectors and randomized distance spread danger broadly without a uniform ring; no score or vial shortcut. |
+| Apply runtime physics mass after engine initialization | Native constructors define component defaults, while authority applies Cauldron ingredient mass in `BeginPlay`. This preserves the existing 16 kg tuning without querying physical material state during CDO construction, which UE 5.7 rejects during cook. |
 
 ## Design Direction Requiring Care
 

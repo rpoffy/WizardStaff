@@ -1,7 +1,7 @@
 "AppBuild"
 {
     "AppID" "4954290"
-    "Desc" "Wizard Staff private Windows smoke build"
+    "Desc" "Wizard Staff current private playtest candidate preview 2026-07-16"
 
     // Safety default: validate manifests and paths without uploading content.
     "Preview" "1"

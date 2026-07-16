@@ -12,7 +12,7 @@ Party Hall -> Mug Run -> Party Hall -> Staffs at Dawn -> Party Hall
 -> Cauldron Catastrophe -> Party Hall -> Grand Wizard Final -> Party Hall
 ```
 
-The full loop, arena entry/exit, transition floor, cleanup, deposit-triggered hazard mapping, long-staff intake reliability, Slosh-scaled slippery behavior, and cursed-orb bombardment have human verification.
+The full loop, arena entry/exit, transition floor, cleanup, deposit-triggered hazard mapping, long-staff intake reliability, Slosh-scaled slippery behavior, and eight-bomb sector-spread cursed-orb bombardment have human verification.
 
 ## Trial Identity
 

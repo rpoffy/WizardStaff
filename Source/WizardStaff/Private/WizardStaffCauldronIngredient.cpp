@@ -22,7 +22,6 @@ AWizardStaffCauldronIngredient::AWizardStaffCauldronIngredient()
 	IngredientMesh->SetSimulatePhysics(true);
 	IngredientMesh->SetLinearDamping(0.35f);
 	IngredientMesh->SetAngularDamping(0.45f);
-	IngredientMesh->SetMassOverrideInKg(NAME_None, 16.0f, true);
 
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> SphereMesh(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> BasicMaterial(TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
@@ -41,7 +40,11 @@ AWizardStaffCauldronIngredient::AWizardStaffCauldronIngredient()
 void AWizardStaffCauldronIngredient::BeginPlay()
 {
 	Super::BeginPlay();
-	if (!HasAuthority() && IngredientMesh)
+	if (HasAuthority() && IngredientMesh)
+	{
+		IngredientMesh->SetMassOverrideInKg(NAME_None, 16.0f, true);
+	}
+	else if (IngredientMesh)
 	{
 		IngredientMesh->SetGenerateOverlapEvents(false);
 		IngredientMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);

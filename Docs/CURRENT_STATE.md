@@ -1,6 +1,6 @@
 # Current State
 
-**Last Updated:** 2026-07-15
+**Last Updated:** 2026-07-16
 **Purpose:** A current, evidence-based status snapshot. For historical details, use [DESIGN_DECISIONS.md](DESIGN_DECISIONS.md) and [OnlineMultiplayerArchitecturePlan.md](OnlineMultiplayerArchitecturePlan.md).
 
 ## Evidence Rules
@@ -28,7 +28,7 @@
 | Area | Status | Evidence |
 | --- | --- | --- |
 | Cauldron trial classes and tuning | **Implemented and verified** | Arena, vial, hazard, ingredient, and deposit-arc classes are in current source and the focused Trial behavior has been human-tested. |
-| Vial pickup, stack effects, banking/deposit, deposit-triggered hazards, curse, scoring/readability | **Implemented and verified, with new tuning unverified** | Human testing confirmed deposit-triggered hazard mapping, long-staff intake reliability, Slosh-scaled slippery behavior, and the original cursed-orb bombardment alongside the existing vial/banking loop. The new eight-bomb sector-spread tuning requires a focused human balance check. Detailed behavior is in [CauldronCatastropheDesign.md](CauldronCatastropheDesign.md). |
+| Vial pickup, stack effects, banking/deposit, deposit-triggered hazards, curse, scoring/readability | **Implemented and verified** | Human testing confirmed deposit-triggered hazard mapping, long-staff intake reliability, Slosh-scaled slippery behavior, and the eight-bomb sector-spread cursed-orb bombardment alongside the existing vial/banking loop. Detailed behavior is in [CauldronCatastropheDesign.md](CauldronCatastropheDesign.md). |
 | Normal match rotation | **Implemented and verified locally and in listen-server PIE** | Complete human playthroughs confirmed Party Hall between every Trial, Grand Wizard Final startup, and return to intermission. |
 | Arena separation and start placement | **Implemented and verified locally** | Human playthroughs confirmed the separated runtime arenas and corrected transition placement. |
 | Results/intermission gameplay cleanup | **Implemented and verified** | Results immediately neutralizes Cauldron hazards, movement effects, curse/banking state, bombs, arcs, vials, and callbacks while retaining only the inert transition floor. |
@@ -44,6 +44,7 @@
 | Steam host session creation | **Implemented and verified** | Prior host log and smoke records report Steam subsystem/session creation and listen travel. |
 | Steam find/join/travel on two machines/two accounts | **Partially implemented** | Join helper is in current source. Same-machine multi-process testing hit Steam API limitations; no valid two-machine validation is recorded. |
 | Steam private build installation | **Implemented and verified** | A private Steam build was installed and a full playthrough was reported working. |
+| Current `private_test` playtest build | **Implemented and verified** | BuildID `24238419` (depot manifest `593837560765890906`) packaged, previewed, uploaded, and was assigned only to `private_test` on 2026-07-16. A Steam-installed human playthrough verified the complete current loop and in-game Party Hall standings board. `default` was intentionally left unchanged. |
 | Runtime fallback lighting for packaged/private Steam build | **Implemented and verified** | Lighting bug was reported, fixed through a follow-up build, and confirmed by a later full playthrough. |
 | Steam leaderboard/stat submission | **Implemented but unverified** | The C++ submit/flush scaffold and Steamworks leaderboard setup exist; no successful write/read-back test is recorded. |
 | Production lobby/UI/matchmaking/invites/reconnect | **Planned / deferred** | Explicitly outside current scope. |

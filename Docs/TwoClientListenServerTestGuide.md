@@ -116,7 +116,7 @@ Expected: host accepts P2, client enters `OnlineClient`, both PlayerState mirror
 
 ## Observation Notes
 
-The separately spawned client window may look smoother than an unfocused embedded PIE viewport. Record whether jitter affects camera, remote pawn position, facing, or only the background/unfocused view before treating it as a gameplay networking defect.
+The separately spawned client window may look smoother than an unfocused embedded PIE viewport because Unreal throttles background editor views. Focus the viewport being evaluated before judging camera, pawn movement, or facing smoothness; choppiness confined to an unfocused view is not a gameplay networking defect.
 
 Use this failure template:
 
