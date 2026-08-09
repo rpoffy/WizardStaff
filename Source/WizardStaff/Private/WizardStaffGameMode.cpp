@@ -34,6 +34,7 @@
 #include "WizardStaffCauldronVialPickup.h"
 #include "WizardStaffComponent.h"
 #include "WizardStaffFinalRitualCircle.h"
+#include "WizardStaffGameInstance.h"
 #include "WizardStaffGameState.h"
 #include "WizardStaffManaMugPickup.h"
 #include "WizardStaffPartyHall.h"
@@ -572,6 +573,19 @@ int32 AWizardStaffGameMode::GetConnectedPlayerControllerCount() const
 	return ConnectedControllerCount;
 }
 
+void AWizardStaffGameMode::UpdateSteamSessionJoinability(bool bJoinable, const TCHAR* Context) const
+{
+	if (DetectPrototypeSessionMode() != EWizardPrototypeSessionMode::OnlineListenServer)
+	{
+		return;
+	}
+
+	if (UWizardStaffGameInstance* WizardGameInstance = GetGameInstance<UWizardStaffGameInstance>())
+	{
+		WizardGameInstance->SetSteamSessionJoinability(bJoinable, Context);
+	}
+}
+
 void AWizardStaffGameMode::AssignOnlineScaffoldPlayerSlot(AController* Controller)
 {
 	if (!Controller)
@@ -802,6 +816,59 @@ void AWizardStaffGameMode::PostLogin(APlayerController* NewPlayer)
 	AssignSharedCameraToPlayer(NewPlayer);
 	SyncPlaytestBots();
 	SyncReplicatedObservableState();
+	UpdateSteamSessionJoinability(
+		IsPartyHallActive() && ActiveTrialState == EWizardTrialState::WaitingToStart && GetConnectedPlayerControllerCount() < 2,
+		TEXT("PostLogin"));
+}
+
+void AWizardStaffGameMode::PreLogin(
+	const FString& Options,
+	const FString& Address,
+	const FUniqueNetIdRepl& UniqueId,
+	FString& ErrorMessage)
+{
+	Super::PreLogin(Options, Address, UniqueId, ErrorMessage);
+	if (!ErrorMessage.IsEmpty() || DetectPrototypeSessionMode() != EWizardPrototypeSessionMode::OnlineListenServer)
+	{
+		return;
+	}
+
+	if (!IsPartyHallActive() || ActiveTrialState != EWizardTrialState::WaitingToStart)
+	{
+		ErrorMessage = TEXT("Match in progress. Rejoin when the host is waiting in Party Hall.");
+		UE_LOG(LogTemp, Log, TEXT("WizardStaff rejected an online join outside Party Hall: address=%s partyState=%s trialState=%s."),
+			Address.IsEmpty() ? TEXT("<unknown>") : *Address,
+			*GetPartyMatchStateText(PartyMatchState),
+			*GetTrialStateText(ActiveTrialState));
+	}
+}
+
+void AWizardStaffGameMode::Logout(AController* Exiting)
+{
+	const APlayerController* ExitingPlayerController = Cast<APlayerController>(Exiting);
+	const bool bRemoteOnlineDeparture = HasAuthority()
+		&& DetectPrototypeSessionMode() == EWizardPrototypeSessionMode::OnlineListenServer
+		&& ExitingPlayerController
+		&& !ExitingPlayerController->IsLocalController();
+	const AWizardStaffPlayerState* ExitingPlayerState = Exiting
+		? Cast<AWizardStaffPlayerState>(Exiting->PlayerState)
+		: nullptr;
+	const int32 ExitingPlayerSlot = ExitingPlayerState ? ExitingPlayerState->GetWizardDisplaySlot() : INDEX_NONE;
+
+	Super::Logout(Exiting);
+	RefreshPrototypeSessionMode(TEXT("Logout"));
+	SyncPlaytestBots();
+
+	if (bRemoteOnlineDeparture)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("WizardStaff online P%d departed; aborting the current match to a clean Party Hall generation."),
+			ExitingPlayerSlot == INDEX_NONE ? 0 : ExitingPlayerSlot + 1);
+		StartPartyMatch();
+		SetPartyHallReadyFeedbackMessage(TEXT("Player left. Match reset; waiting in Party Hall for another player."), FColor::Orange);
+		UpdateSteamSessionJoinability(true, TEXT("Remote player Logout"));
+	}
+
+	SyncReplicatedObservableState();
 }
 
 void AWizardStaffGameMode::RestartPlayer(AController* NewPlayer)
@@ -908,6 +975,7 @@ void AWizardStaffGameMode::StartNextTrial()
 
 void AWizardStaffGameMode::StartTrialCountdown(EWizardTrialType TrialType)
 {
+	UpdateSteamSessionJoinability(false, TEXT("Trial countdown"));
 	CleanupCauldronCatastrophe();
 	CauldronScores.Reset();
 	ActiveTrialType = TrialType;
@@ -974,6 +1042,7 @@ void AWizardStaffGameMode::StartTrialCountdown(EWizardTrialType TrialType)
 
 void AWizardStaffGameMode::StartActiveTrial()
 {
+	UpdateSteamSessionJoinability(false, TEXT("Active Trial"));
 	PartyMatchState = EWizardPartyMatchState::Trial;
 	ActiveTrialState = EWizardTrialState::Active;
 
@@ -3018,6 +3087,28 @@ void AWizardStaffGameMode::RefreshCauldronVialEffects(AWizardStaffWizardCharacte
 	}
 	const TArray<FCauldronVialStackEntry>* Stack = CauldronVialStacks.Find(Wizard);
 	const int32 Count = Stack ? Stack->Num() : 0;
+	TMap<FName, EWizardCauldronVialType> VialTypesBySegmentTag;
+	if (Stack)
+	{
+		for (const FCauldronVialStackEntry& Entry : *Stack)
+		{
+			VialTypesBySegmentTag.Add(Entry.SegmentTag, Entry.Type);
+		}
+	}
+
+	TArray<EWizardCauldronVialType> SegmentVialTypes;
+	if (Wizard->StaffComponent)
+	{
+		const TArray<FName>& SegmentTags = Wizard->StaffComponent->GetStaffSegmentTags();
+		SegmentVialTypes.Reserve(SegmentTags.Num());
+		for (const FName SegmentTag : SegmentTags)
+		{
+			const EWizardCauldronVialType* VialType = VialTypesBySegmentTag.Find(SegmentTag);
+			SegmentVialTypes.Add(VialType ? *VialType : EWizardCauldronVialType::None);
+		}
+	}
+	Wizard->SetReplicatedCauldronVialSegmentTypes(SegmentVialTypes);
+
 	const EWizardCauldronVialType ActiveType = Count > 0 ? Stack->Last().Type : EWizardCauldronVialType::None;
 	float SpeedMultiplier = 1.0f;
 	float AccelerationMultiplier = 1.0f;
@@ -3124,6 +3215,7 @@ void AWizardStaffGameMode::ClearCauldronVials(bool bRemoveSegments)
 		}
 		if (IsValid(Wizard))
 		{
+			Wizard->SetReplicatedCauldronVialSegmentTypes({});
 			Wizard->SetCauldronVialEffectState(EWizardCauldronVialType::None, 0, 1.0f, 1.0f, 1.0f);
 		}
 	}
@@ -3132,6 +3224,7 @@ void AWizardStaffGameMode::ClearCauldronVials(bool bRemoveSegments)
 	{
 		if (IsValid(Wizard))
 		{
+			Wizard->SetReplicatedCauldronVialSegmentTypes({});
 			Wizard->SetCauldronVialEffectState(EWizardCauldronVialType::None, 0, 1.0f, 1.0f, 1.0f);
 		}
 	}
@@ -3550,6 +3643,7 @@ void AWizardStaffGameMode::FinishActiveTrialResults()
 
 void AWizardStaffGameMode::EnterGrandWizardFinalRound()
 {
+	UpdateSteamSessionJoinability(false, TEXT("Grand Wizard Final"));
 	// The Final reuses the prototype arena hidden during Party Hall. Restore its floor first,
 	// then retire the retained Cauldron arena before spawning Final presentation and players.
 	SetPrototypeArenaPhasePresentationActive(true);
@@ -8849,6 +8943,7 @@ void AWizardStaffGameMode::EnterPartyHallIntermission()
 	// StartTrialCountdown or EnterGrandWizardFinalRound performs teardown after this grace period.
 	SetWizardPrototypeInputsLocked(false);
 	UpdatePartyHallSigns();
+	UpdateSteamSessionJoinability(GetConnectedPlayerControllerCount() < 2, TEXT("Party Hall"));
 
 	AWizardStaffHUD::PushGameplayMessage(this, FString::Printf(TEXT("Party Hall intermission %.0fs"), IntermissionRemainingTime), FColor::Cyan, 2.0f, EWizardHudMessageCategory::Gameplay);
 	if (GEngine && PartyMatchTuning.bShowDebug && AWizardStaffHUD::IsFullDebugMode(this))

@@ -1161,7 +1161,9 @@ public:
 
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaSeconds) override;
+	virtual void PreLogin(const FString& Options, const FString& Address, const FUniqueNetIdRepl& UniqueId, FString& ErrorMessage) override;
 	virtual void PostLogin(APlayerController* NewPlayer) override;
+	virtual void Logout(AController* Exiting) override;
 	virtual void RestartPlayer(AController* NewPlayer) override;
 
 	UFUNCTION(BlueprintCallable, Category = "Party Match")
@@ -1845,6 +1847,7 @@ protected:
 	bool ShouldHoldOnlineIntermissionForPlayers() const;
 	bool ShouldWaitForOnlineHostReadyBell() const;
 	int32 GetConnectedPlayerControllerCount() const;
+	void UpdateSteamSessionJoinability(bool bJoinable, const TCHAR* Context) const;
 	void AssignOnlineScaffoldPlayerSlot(AController* Controller);
 	int32 FindFirstAvailablePlayerSlot(const AWizardStaffPlayerState* PlayerStateToIgnore = nullptr) const;
 	void EnsureLocalPlayers();

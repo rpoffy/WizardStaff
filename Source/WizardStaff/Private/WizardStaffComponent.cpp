@@ -106,6 +106,15 @@ void UWizardStaffComponent::RebuildStaffSegmentsForCount(int32 TargetSegmentCoun
 	NotifyOwnerStaffStressChanged(true);
 }
 
+void UWizardStaffComponent::ApplyStaffSegmentReadableColors(const TArray<FLinearColor>& SegmentColors)
+{
+	const int32 ColorCount = FMath::Min(SegmentMeshes.Num(), SegmentColors.Num());
+	for (int32 SegmentIndex = 0; SegmentIndex < ColorCount; ++SegmentIndex)
+	{
+		ApplyVisualColor(SegmentMeshes[SegmentIndex], SegmentColors[SegmentIndex]);
+	}
+}
+
 int32 UWizardStaffComponent::AddStaffSegmentInternal(bool bRecordTelemetry, FName SegmentTag, const FLinearColor* OverrideSegmentColor)
 {
 	if (SegmentCount >= VisualTuning.MaxTestSegments)

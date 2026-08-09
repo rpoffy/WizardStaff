@@ -37,6 +37,8 @@ namespace
 constexpr float StaffSnapCueDurationSeconds = 0.85f;
 constexpr float StaffSnapCuePitchDegrees = 16.0f;
 constexpr float StaffSnapCueRollDegrees = 14.0f;
+constexpr float StaffSnapCosmeticGravity = 900.0f;
+constexpr float StaffSnapCosmeticShrinkDurationSeconds = 0.22f;
 constexpr float ServerFacingYawMaxBurstDegrees = 30.0f;
 constexpr float ServerFacingYawMaxInputScale = 2.0f;
 constexpr float NetworkStaffClashMashMinIntervalSeconds = 0.04f;
@@ -494,6 +496,7 @@ void AWizardStaffWizardCharacter::GetLifetimeReplicatedProps(TArray<FLifetimePro
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
 	DOREPLIFETIME(AWizardStaffWizardCharacter, ReplicatedStaffSegmentCount);
+	DOREPLIFETIME(AWizardStaffWizardCharacter, ReplicatedCauldronVialSegmentTypes);
 	DOREPLIFETIME(AWizardStaffWizardCharacter, ReplicatedManaSlosh);
 	DOREPLIFETIME(AWizardStaffWizardCharacter, ReplicatedMaxManaSlosh);
 	DOREPLIFETIME(AWizardStaffWizardCharacter, ReplicatedStaffStress);
@@ -924,6 +927,17 @@ void AWizardStaffWizardCharacter::SyncReplicatedStaffSegmentCountFromAuthority()
 	ForceNetUpdate();
 }
 
+void AWizardStaffWizardCharacter::SetReplicatedCauldronVialSegmentTypes(const TArray<EWizardCauldronVialType>& SegmentTypes)
+{
+	if (!HasAuthority() || ReplicatedCauldronVialSegmentTypes == SegmentTypes)
+	{
+		return;
+	}
+
+	ReplicatedCauldronVialSegmentTypes = SegmentTypes;
+	ForceNetUpdate();
+}
+
 void AWizardStaffWizardCharacter::SyncReplicatedStaffStressFromAuthority(bool bForce)
 {
 	if (!HasAuthority())
@@ -989,14 +1003,106 @@ void AWizardStaffWizardCharacter::SyncReplicatedStaffSnapCueFromAuthority(int32 
 void AWizardStaffWizardCharacter::StartStaffSnapReadabilityCue(int32 SegmentCountAfter, bool bWasMegaTemporarySegment)
 {
 	(void)SegmentCountAfter;
+	ClearStaffSnapCosmeticSegmentCue();
 	StaffSnapCueTimeRemaining = StaffSnapCueDurationSeconds;
 	bLastStaffSnapCueWasMegaTemporarySegment = bWasMegaTemporarySegment;
+	StartStaffSnapCosmeticSegmentCue(bWasMegaTemporarySegment);
+}
+
+void AWizardStaffWizardCharacter::StartStaffSnapCosmeticSegmentCue(bool bWasMegaTemporarySegment)
+{
+	UWorld* World = GetWorld();
+	if (!World || World->GetNetMode() == NM_Standalone || !StaffComponent || !StaffRoot || !StaffComponent->SegmentMeshAsset)
+	{
+		return;
+	}
+
+	UStaticMeshComponent* CueMesh = NewObject<UStaticMeshComponent>(this);
+	if (!CueMesh)
+	{
+		return;
+	}
+
+	CueMesh->SetMobility(EComponentMobility::Movable);
+	CueMesh->SetStaticMesh(StaffComponent->SegmentMeshAsset);
+	CueMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	CueMesh->SetGenerateOverlapEvents(false);
+	CueMesh->SetCanEverAffectNavigation(false);
+	CueMesh->SetIsReplicated(false);
+	if (StaffComponent->StaffMaterial)
+	{
+		CueMesh->SetMaterial(0, StaffComponent->StaffMaterial);
+	}
+	AddInstanceComponent(CueMesh);
+	CueMesh->RegisterComponent();
+
+	FVector CueLocation = StaffRoot->GetComponentLocation()
+		+ (StaffRoot->GetUpVector() * (StaffComponent->VisualTuning.BaseStaffFallbackHeight + (StaffComponent->VisualTuning.SegmentFallbackHeight * 0.5f)));
+	if (const UStaticMeshComponent* TopSegment = StaffComponent->GetTopStaffSegmentMesh())
+	{
+		CueLocation = TopSegment->DoesSocketExist(StaffComponent->TopSocketName)
+			? TopSegment->GetSocketLocation(StaffComponent->TopSocketName)
+			: TopSegment->Bounds.Origin + (StaffRoot->GetUpVector() * TopSegment->Bounds.BoxExtent.Z);
+	}
+
+	StaffSnapCosmeticSegmentBaseScale = StaffComponent->VisualTuning.SegmentVisualScale;
+	CueMesh->SetWorldLocationAndRotation(CueLocation, StaffRoot->GetComponentRotation());
+	CueMesh->SetWorldScale3D(StaffSnapCosmeticSegmentBaseScale);
+
+	if (UMaterialInstanceDynamic* CueMaterial = CueMesh->CreateAndSetMaterialInstanceDynamic(0))
+	{
+		const FLinearColor CueColor = bWasMegaTemporarySegment
+			? MegaStaffVisualColor
+			: StaffComponent->VisualTuning.SegmentColor;
+		CueMaterial->SetVectorParameterValue(TEXT("Color"), CueColor);
+		CueMaterial->SetVectorParameterValue(TEXT("BaseColor"), CueColor);
+	}
+
+	const float SideSign = ((ReplicatedStaffSnapSequence + FMath::Max(ReplicatedLastSnapPlayerIndex, 0)) % 2 == 0) ? 1.0f : -1.0f;
+	StaffSnapCosmeticSegmentVelocity = (GetActorForwardVector() * 175.0f)
+		+ (GetActorRightVector() * SideSign * 210.0f)
+		+ FVector(0.0f, 0.0f, 320.0f);
+	StaffSnapCosmeticSegmentAngularVelocity = FRotator(250.0f, SideSign * 190.0f, SideSign * 340.0f);
+	StaffSnapCosmeticSegmentMesh = CueMesh;
+}
+
+void AWizardStaffWizardCharacter::UpdateStaffSnapCosmeticSegmentCue(float DeltaSeconds)
+{
+	if (!IsValid(StaffSnapCosmeticSegmentMesh))
+	{
+		StaffSnapCosmeticSegmentMesh = nullptr;
+		return;
+	}
+
+	const float SafeDeltaSeconds = FMath::Max(DeltaSeconds, 0.0f);
+	StaffSnapCosmeticSegmentMesh->AddWorldOffset(StaffSnapCosmeticSegmentVelocity * SafeDeltaSeconds, false);
+	StaffSnapCosmeticSegmentVelocity.Z -= StaffSnapCosmeticGravity * SafeDeltaSeconds;
+	StaffSnapCosmeticSegmentMesh->AddWorldRotation(StaffSnapCosmeticSegmentAngularVelocity * SafeDeltaSeconds, false);
+
+	const float ShrinkAlpha = FMath::Clamp(
+		StaffSnapCueTimeRemaining / FMath::Max(StaffSnapCosmeticShrinkDurationSeconds, 0.01f),
+		0.0f,
+		1.0f);
+	StaffSnapCosmeticSegmentMesh->SetWorldScale3D(StaffSnapCosmeticSegmentBaseScale * ShrinkAlpha);
+}
+
+void AWizardStaffWizardCharacter::ClearStaffSnapCosmeticSegmentCue()
+{
+	if (IsValid(StaffSnapCosmeticSegmentMesh))
+	{
+		StaffSnapCosmeticSegmentMesh->DestroyComponent();
+	}
+	StaffSnapCosmeticSegmentMesh = nullptr;
+	StaffSnapCosmeticSegmentVelocity = FVector::ZeroVector;
+	StaffSnapCosmeticSegmentAngularVelocity = FRotator::ZeroRotator;
+	StaffSnapCosmeticSegmentBaseScale = FVector::OneVector;
 }
 
 void AWizardStaffWizardCharacter::ClearStaffSnapReadabilityCue(bool bClearReplicated)
 {
 	StaffSnapCueTimeRemaining = 0.0f;
 	bLastStaffSnapCueWasMegaTemporarySegment = false;
+	ClearStaffSnapCosmeticSegmentCue();
 
 	if (!bClearReplicated || !HasAuthority())
 	{
@@ -2482,6 +2588,11 @@ void AWizardStaffWizardCharacter::OnRep_ReplicatedStaffSegmentCount()
 	RebuildStaffVisualsFromReplicatedSegmentCount();
 }
 
+void AWizardStaffWizardCharacter::OnRep_ReplicatedCauldronVialSegmentTypes()
+{
+	RebuildStaffVisualsFromReplicatedSegmentCount();
+}
+
 void AWizardStaffWizardCharacter::OnRep_ReplicatedManaSlosh()
 {
 	ReplicatedMaxManaSlosh = FMath::Max(ReplicatedMaxManaSlosh, 1.0f);
@@ -2504,8 +2615,7 @@ void AWizardStaffWizardCharacter::OnRep_ReplicatedStaffSnapSequence()
 	LastProcessedStaffSnapSequence = ReplicatedStaffSnapSequence;
 	if (ReplicatedLastSnapPlayerIndex == INDEX_NONE)
 	{
-		StaffSnapCueTimeRemaining = 0.0f;
-		bLastStaffSnapCueWasMegaTemporarySegment = false;
+		ClearStaffSnapReadabilityCue(false);
 		return;
 	}
 
@@ -2669,12 +2779,26 @@ void AWizardStaffWizardCharacter::RebuildStaffVisualsFromReplicatedSegmentCount(
 		ReplicatedStaffSegmentCount,
 		0,
 		FMath::Max(StaffComponent->VisualTuning.MaxTestSegments, 0));
-	if (StaffComponent->GetSegmentCount() == SafeSegmentCount)
+	if (StaffComponent->GetSegmentCount() != SafeSegmentCount)
 	{
-		return;
+		StaffComponent->RebuildStaffSegmentsForCount(SafeSegmentCount);
 	}
 
-	StaffComponent->RebuildStaffSegmentsForCount(SafeSegmentCount);
+	TArray<FLinearColor> ReadableSegmentColors;
+	ReadableSegmentColors.Reserve(SafeSegmentCount);
+	for (int32 SegmentIndex = 0; SegmentIndex < SafeSegmentCount; ++SegmentIndex)
+	{
+		const EWizardCauldronVialType VialType = ReplicatedCauldronVialSegmentTypes.IsValidIndex(SegmentIndex)
+			? ReplicatedCauldronVialSegmentTypes[SegmentIndex]
+			: EWizardCauldronVialType::None;
+		const FLinearColor DefaultColor = StaffComponent->VisualTuning.bAlternateSegmentColors && (SegmentIndex % 2 == 1)
+			? StaffComponent->VisualTuning.SegmentAlternateColor
+			: StaffComponent->VisualTuning.SegmentColor;
+		ReadableSegmentColors.Add(VialType == EWizardCauldronVialType::None
+			? DefaultColor
+			: GetWizardCauldronVialColor(VialType));
+	}
+	StaffComponent->ApplyStaffSegmentReadableColors(ReadableSegmentColors);
 }
 
 void AWizardStaffWizardCharacter::RefreshColorFromPlayerState()
@@ -3689,6 +3813,7 @@ void AWizardStaffWizardCharacter::UpdateBonkVisual(float DeltaSeconds)
 	if (StaffSnapCueTimeRemaining > 0.0f)
 	{
 		StaffSnapCueTimeRemaining = FMath::Max(0.0f, StaffSnapCueTimeRemaining - DeltaSeconds);
+		UpdateStaffSnapCosmeticSegmentCue(DeltaSeconds);
 		const float CueAlpha = FMath::Clamp(StaffSnapCueTimeRemaining / FMath::Max(StaffSnapCueDurationSeconds, 0.01f), 0.0f, 1.0f);
 		const float TimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 		const float MegaScale = bLastStaffSnapCueWasMegaTemporarySegment ? 1.25f : 1.0f;
@@ -3697,6 +3822,10 @@ void AWizardStaffWizardCharacter::UpdateBonkVisual(float DeltaSeconds)
 			FMath::Sin(TimeSeconds * 44.0f) * StaffSnapCuePitchDegrees * ShakeStrength,
 			0.0f,
 			FMath::Cos(TimeSeconds * 39.0f) * StaffSnapCueRollDegrees * ShakeStrength);
+		if (StaffSnapCueTimeRemaining <= 0.0f)
+		{
+			ClearStaffSnapCosmeticSegmentCue();
+		}
 	}
 
 	if (bStaffClashActive)

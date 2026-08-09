@@ -1,6 +1,6 @@
 # Design Decisions
 
-**Last Updated:** 2026-08-04
+**Last Updated:** 2026-08-09
 
 This file records durable choices, not implementation chronology. Current evidence belongs in [CURRENT_STATE.md](CURRENT_STATE.md).
 
@@ -12,12 +12,15 @@ This file records durable choices, not implementation chronology. Current eviden
 | Separate Cauldron gameplay teardown from transition-floor lifetime | Results clears banking, curse, vials, hazards, bombs, arcs, timers, movement/readability effects, and callbacks immediately; the inert floor remains through intermission. |
 | Keep local-first workflows while extending listen-server support | One-human-plus-bot, couch, shared camera, keyboard fallback, and local loose snapped physics must survive online changes. |
 | Server owns gameplay truth | GameMode/server owns state, outcomes, scoring/Favor, combat, cleanup, Final, and reset. Replicated data, HUD, map actors, event messages, and Steam metadata are presentation/discovery only. |
+| Deliver authoritative results owner-only before a Steam leaderboard write | GameMode computes the result and sends it through the human player's reliable owner-only PlayerState RPC. Only that exact local, non-bot PlayerState may enter the private GameInstance write seam. Steam requires each authenticated client to write for its own user, so this scaffold preserves server gameplay authority but is not backend anti-cheat validation. |
 | Presentation actors own explicit replicated phase-readable state | GameMode selects the phase; actors apply small idempotent replicated presentation states. OnRep paths never advance gameplay. |
 | Keep reset, presentation, and staging responsibilities separate | Trial reset helpers reset owned state, presentation uses positive phase semantics, and staging teleports only after the destination is safe. |
 | Dirty-check replicated readability mirrors | PlayerState forces updates only after real changes; display timers use 0.1-second and progress uses 1% readable thresholds. |
 | Assigned PlayerState display slot is stable runtime identity | Preserve `WizardDisplaySlot`; new PlayerStates take the first unused slot. `PlayerId`/iterator order are pre-assignment fallbacks only. Reconnect restoration remains deferred. |
 | Retain direct-connect as a development fallback | It is verified and remains faster to diagnose than the immature Steam join path. |
+| Version Steam sessions with Unreal's network checksum | Advertised Steam build metadata and `BuildUniqueId` derive from engine/project network compatibility plus explicit `ProjectVersion`. Search rejects mismatched map, string identity, or numeric identity; network-incompatible packages must bump `ProjectVersion`. |
 | Tear down stale local Steam session state before retrying Join | A joining process may retain a named `GameSession` after leaving or failing. A new in-game Join request destroys that local session first, then starts discovery only from the guarded completion callback; this is retry cleanup, not reconnect UX or gameplay authority. |
+| Abort an interrupted online match to Party Hall | The prototype does not preserve identity or progress through a departure. Steam advertisement and joins are open only while Party Hall waits for P2; a remote departure resets server-owned gameplay into a new clean generation and reopens that safe join boundary. Robust mid-Trial reconnect remains deferred. |
 | Use UE 5.7 SteamSockets for Steam lobby P2P travel, with IP fallback | OnlineSubsystemSteam lobby connect strings use `steam.<id>` addresses that the prior IP-only driver contract could not carry. The fallback keeps editor and non-Steam/direct-connect diagnosis available when SteamSockets is unavailable. |
 | Use a small C++ main menu for private playtest entry | The default map is a menu-only frontend. Local opens the established prototype map; online buttons delegate to the existing Steam helpers. This avoids an auto-start match and adds no gameplay or lobby authority. |
 | Use a local gameplay submenu instead of Escape immediately leaving | Escape/controller-menu opens Resume, Controls, and an explicit Return action. It blocks only the invoking local controller's input and never pauses or controls an online match; Return reuses the established session teardown and frontend travel. |
@@ -28,7 +31,8 @@ This file records durable choices, not implementation chronology. Current eviden
 | Decouple primary keyboard movement from wizard facing | WASD and arrow keys use the stable top-down camera basis so mouse aim can rotate the wizard/staff without rotating the player's movement frame. Left-stick and same-keyboard fallback behavior remain unchanged to avoid an unrequested controller/couch redesign. |
 | Carry joiner facing through CharacterMovement control rotation | Autonomous facing should share Unreal's existing client-move channel instead of racing movement correction through a separate yaw RPC. Server validation remains bounded, and replicated Slosh may inform local movement prediction without becoming authoritative gameplay state. |
 | Use project-owned frontend and gameplay maps with runtime presentation | `/Game/Maps/WizardStaff_MainMenu` is the frontend and `/Game/Maps/WizardStaff_Prototype` remains the gameplay map; together they replaced the engine OpenWorld fallback while runtime actors provide prototype spaces and fallback lighting. |
-| Preserve local loose snapped physics; do not replicate debris physics | Online uses server-owned segment loss/count and minimal cues without client debris authority. |
+| Preserve local loose snapped physics; do not replicate debris physics | Online uses server-owned segment loss/count and the existing snap sequence to trigger one bounded, non-colliding local segment pop per machine. No debris transform, collision, physics, or gameplay effect replicates; standalone retains its real loose physics actor. |
+| Replicate Cauldron vial segment type only for readability | GameMode keeps unique segment tags and the authoritative vial stack. Clients receive only an ordered `None`/`Speed`/`BurdeningPower` visual mirror and recolor existing meshes; the mirror cannot drive banking, effects, snapping, or scoring. |
 | Use readable prototype presentation before production UI | Canvas HUD, markers, event feed, ritual actors, and fallback lighting remain scaffolding. |
 | Tie Cauldron hazards to vial deposits | Each successful Speed/Burdening Power transfer gets one server-owned 25% matching slippery/sticky roll; unrelated timed hazards are removed. |
 | Slippery puddles create a bounded Slosh-scaled skid | Server applies forward impulse and short low-friction carry-out without changing base Slosh or unrelated movement tuning. |

@@ -511,6 +511,7 @@ public:
 	int32 GetReplicatedStaffSegmentCount() const { return ReplicatedStaffSegmentCount; }
 
 	void SyncReplicatedStaffSegmentCountFromAuthority();
+	void SetReplicatedCauldronVialSegmentTypes(const TArray<EWizardCauldronVialType>& SegmentTypes);
 	void SyncReplicatedStaffStressFromAuthority(bool bForce = false);
 	void SyncReplicatedCarriedBrewRewardFromAuthority();
 	void SyncReplicatedMegaStaffStateFromAuthority(bool bForce = false);
@@ -859,6 +860,9 @@ public:
 	UPROPERTY(ReplicatedUsing = OnRep_ReplicatedStaffSegmentCount, VisibleInstanceOnly, BlueprintReadOnly, Category = "Wizard|Online Scaffold")
 	int32 ReplicatedStaffSegmentCount = 0;
 
+	UPROPERTY(ReplicatedUsing = OnRep_ReplicatedCauldronVialSegmentTypes, VisibleInstanceOnly, BlueprintReadOnly, Category = "Wizard|Cauldron Catastrophe")
+	TArray<EWizardCauldronVialType> ReplicatedCauldronVialSegmentTypes;
+
 	UPROPERTY(ReplicatedUsing = OnRep_ReplicatedManaSlosh, VisibleInstanceOnly, BlueprintReadOnly, Category = "Wizard|Online Scaffold")
 	float ReplicatedManaSlosh = 0.0f;
 
@@ -1033,6 +1037,9 @@ protected:
 	void OnRep_ReplicatedStaffSegmentCount();
 
 	UFUNCTION()
+	void OnRep_ReplicatedCauldronVialSegmentTypes();
+
+	UFUNCTION()
 	void OnRep_ReplicatedManaSlosh();
 
 	UFUNCTION()
@@ -1136,6 +1143,9 @@ protected:
 	void PlayBonkStressFeedback(float StressAdded, bool bSnapped, int32 HitCount) const;
 	void SyncReplicatedStaffSnapCueFromAuthority(int32 SegmentCountAfter, bool bWasMegaTemporarySegment);
 	void StartStaffSnapReadabilityCue(int32 SegmentCountAfter, bool bWasMegaTemporarySegment);
+	void StartStaffSnapCosmeticSegmentCue(bool bWasMegaTemporarySegment);
+	void UpdateStaffSnapCosmeticSegmentCue(float DeltaSeconds);
+	void ClearStaffSnapCosmeticSegmentCue();
 	void ClearStaffSnapReadabilityCue(bool bClearReplicated);
 	bool FireArcanePinball();
 	bool SpawnArcanePinballReadabilityShell();
@@ -1180,6 +1190,9 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInstanceDynamic> BroomBristleMaterialInstance;
 
+	UPROPERTY(Transient)
+	TObjectPtr<UStaticMeshComponent> StaffSnapCosmeticSegmentMesh;
+
 	float SloshTurnCarryDegreesPerSecond = 0.0f;
 	float StumbleCooldownRemaining = 0.0f;
 	FRotator SloshStaffVisualRotation = FRotator::ZeroRotator;
@@ -1210,6 +1223,9 @@ private:
 	float StaffSnapCueTimeRemaining = 0.0f;
 	bool bLastStaffSnapCueWasMegaTemporarySegment = false;
 	int32 LastProcessedStaffSnapSequence = 0;
+	FVector StaffSnapCosmeticSegmentVelocity = FVector::ZeroVector;
+	FRotator StaffSnapCosmeticSegmentAngularVelocity = FRotator::ZeroRotator;
+	FVector StaffSnapCosmeticSegmentBaseScale = FVector::OneVector;
 	TWeakObjectPtr<AWizardStaffWizardCharacter> StaffClashOpponent;
 	FVector StaffClashLockedLocation = FVector::ZeroVector;
 	float StaffClashTimeRemaining = 0.0f;

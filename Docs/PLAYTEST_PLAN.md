@@ -1,6 +1,6 @@
 # Playtest Plan
 
-**Last Updated:** 2026-08-04
+**Last Updated:** 2026-08-09
 
 This is a repeatable validation plan, not proof that every item has already passed. Record date, build, mode, players, observations, and untested items after a session.
 
@@ -60,12 +60,13 @@ Use standalone PIE first. Cauldron remains development-only unless explicitly pr
 4. Confirm countdown/input lock prevents premature move, jump, boost, bonk, and reward use.
 5. Run one pass through Mug Run, Staffs at Dawn, Cauldron Catastrophe, and Final. Exercise one example of each replicated system where practical.
 6. In both windows, confirm the shared prototype arena is hidden during Party Hall/Staffs/Cauldron, visible before Mug staging, and restored before Final presentation and placement.
-7. Snap a staff segment and confirm authoritative staff count/readability updates in both windows. Loose snapped physics debris is intentionally standalone-only and is not expected online.
-8. Judge movement/facing smoothness only while the relevant PIE viewport is focused. Unreal may throttle an unfocused embedded viewport to save resources; background-only choppiness is an editor artifact, not evidence of a gameplay replication defect.
-9. Rematch; verify no stale pickups, projectiles, powerups, Mega Staff, combat, respawn, Final, HUD, or event-feed state.
-10. In both windows, watch each countdown and rematch handoff for duplicate pawn placement or a second camera snap. The server should stage each wizard once after the destination presentation/floor is ready.
-11. Throughout the loop, compare host and client HUD mirrors: player slot/color, ready state, staff/current Trial score, Favor/wins, all countdown/result/intermission timers, Cauldron curse/banking values, Final Candidate/steal/winner state, and event-feed clearing. Values should remain current and readable; no gameplay may depend on the client mirrors.
-12. For the slot-identity regression, record which window owns P1 and P2. Confirm those slots and colors remain attached to the same PlayerStates through Trial transitions, ring-out/respawn, and rematch; verify spawn sides, score/Favor awards, Arcane Pinball/event labels, and HUD rows never swap because controller iteration order changes. Reconnect/rejoin is not expected to restore a departed identity in this pass.
+7. Snap a staff segment and confirm authoritative staff count/readability updates in both windows. Each window should show exactly one brief detached-segment arc that shrinks away in under a second, never collides, and never persists through respawn, transition, or rematch. Then repeat in standalone and confirm the established real loose physics segment appears without the online cosmetic duplicate. Exact debris motion is intentionally not synchronized online.
+8. During Cauldron, collect a mixed order of Speed and Burdening Power vials on each wizard. Confirm both windows show cyan/orange vial segments at the same staff positions, ordinary segments retain their alternating colors, and bank, snap, and ring-out spill remove the matching top colors once. End the Trial and confirm no vial color survives cleanup. These colors must not drive client gameplay.
+9. Judge movement/facing smoothness only while the relevant PIE viewport is focused. Unreal may throttle an unfocused embedded viewport to save resources; background-only choppiness is an editor artifact, not evidence of a gameplay replication defect.
+10. Rematch; verify no stale pickups, projectiles, powerups, Mega Staff, combat, respawn, Final, HUD, or event-feed state.
+11. In both windows, watch each countdown and rematch handoff for duplicate pawn placement or a second camera snap. The server should stage each wizard once after the destination presentation/floor is ready.
+12. Throughout the loop, compare host and client HUD mirrors: player slot/color, ready state, staff/current Trial score, Favor/wins, all countdown/result/intermission timers, Cauldron curse/banking values, Final Candidate/steal/winner state, and event-feed clearing. Values should remain current and readable; no gameplay may depend on the client mirrors.
+13. For the slot-identity regression, record which window owns P1 and P2. Confirm those slots and colors remain attached to the same PlayerStates through Trial transitions, ring-out/respawn, and rematch; verify spawn sides, score/Favor awards, Arcane Pinball/event labels, and HUD rows never swap because controller iteration order changes. Reconnect/rejoin is not expected to restore a departed identity in this pass.
 
 ## 4. Steam Host and Join Validation
 
@@ -74,16 +75,18 @@ Use standalone PIE first. Cauldron remains development-only unless explicitly pr
 1. On host machine/account, run a private Steam-capable development build and use `WizardSteamHost`.
 2. Confirm logs show Steam subsystem, session creation, project-map listen travel, `OnlineListenServer`, only P1, and Party Hall wait state.
 3. Before testing, confirm both Steam clients show the same beta branch and Steam BuildID. On a second machine/account, launch that build and use the menu's `Join Online Game` action.
-4. Confirm search reports a result or a clear failure within 30 seconds. If it finds a different metadata build, verify the branch/build mismatch message. On success, confirm a `steam.<id>` connect string, SteamSockets client travel, `OnlineClient`, host accepted connection, P2 assignment, and Party Hall readiness.
+4. Confirm search reports a result or a clear failure within 30 seconds. Matching clients should log the same project-version/network-checksum build value and numeric `BuildUniqueId`. If it finds different metadata, verify the branch/build mismatch message and that no travel occurs. On success, confirm a `steam.<id>` connect string, SteamSockets client travel, `OnlineClient`, host accepted connection, P2 assignment, and Party Hall readiness.
 5. Run only a small gameplay sanity path first: one host mug and one client mug. Preserve logs.
 6. Repeat once with no host and confirm `No compatible game found` or timeout feedback. Cancel one active search and immediately retry to verify the old OnlineSubsystem request does not block the new attempt.
-7. Have the joiner return to the menu, then use Join again while the original host remains active. Confirm the joining process logs local `GameSession` teardown, starts a fresh search only after teardown succeeds, and reconnects without restarting either game.
-8. Return both players to the menu, host a fresh session, and join it without restarting either game. Also make one no-host attempt before hosting, then retry. Confirm there is no `AlreadyInSession`, indefinite search, or late travel from an old request.
-9. Compare Party Hall boards in both windows. Confirm Next Trial name/countdown/ready count, every standings row, preset, and leader value match. Bonk the Ready Bell and complete one Trial so at least the ready/countdown and standings/next-Trial snapshots visibly change on both roles. Confirm no board text falls back to a heading-only default.
-10. Walk and rotate continuously on both machines. Compare a similar physical mouse sweep at high and temporarily capped/lower frame rates; yaw distance should remain broadly consistent. As the joiner, repeat while sober and after gaining substantial Slosh, including rapid direction changes while moving. Confirm the local wizard responds immediately, the host sees the same facing without repeated snap-backs, and movement does not become progressively more corrective as Slosh rises. Ring out/respawn once and confirm the wizard keeps the authoritative spawn facing until new turn input.
-11. Hold each WASD/arrow direction while sweeping the mouse through a full turn. Confirm keyboard travel stays aligned to the same screen direction while the wizard/staff rotate independently. Check diagonals, bonking while strafing, substantial Slosh, Cauldron sticky/slippery effects, and both host/joiner roles. Confirm the left stick and same-keyboard Player 2 fallback retain their previous behavior.
-12. Step off the Party Hall floor. Confirm the server recovers the wizard to a safe intermission spawn and the camera never follows indefinitely below the hall.
-13. Repeat the Party Hall fall once as host and once as joining client. Confirm recovery is immediate/readable in both windows and does not change score, Favor, Trial ring-out attribution, or event-feed content.
+7. During Mug Run, have the joiner leave or close the game. Confirm the joiner returns to the menu with a readable connection-loss status when the host is lost, and confirm the remaining host aborts the interrupted match to a clean Party Hall: score/Favor/Trial state, projectiles, pickups, combat, respawn, Cauldron, Final, HUD, and event-feed state must not survive. The host timer must be frozen and the Steam session must reopen for a replacement player.
+8. From the departed process, use Join again without restarting either game. Confirm it logs local `GameSession` teardown, starts a fresh search only after teardown succeeds, reconnects as the available P2, and receives the clean Party Hall generation. Ring the host Ready Bell and confirm Mug Run starts from zero. Do not expect restoration of the departed score, Favor, or prior slot reservation.
+9. While both players are in an active Trial, attempt a third/direct late join if practical. Confirm Steam does not advertise the session and the server rejects the connection rather than spawning a mid-Trial pawn.
+10. Return both players to the menu, host a fresh session, and join it without restarting either game. Also make one no-host attempt before hosting, then retry. Confirm there is no `AlreadyInSession`, indefinite search, or late travel from an old request.
+11. Compare Party Hall boards in both windows. Confirm Next Trial name/countdown/ready count, every standings row, preset, and leader value match. Bonk the Ready Bell and complete one Trial so at least the ready/countdown and standings/next-Trial snapshots visibly change on both roles. Confirm no board text falls back to a heading-only default.
+12. Walk and rotate continuously on both machines. Compare a similar physical mouse sweep at high and temporarily capped/lower frame rates; yaw distance should remain broadly consistent. As the joiner, repeat while sober and after gaining substantial Slosh, including rapid direction changes while moving. Confirm the local wizard responds immediately, the host sees the same facing without repeated snap-backs, and movement does not become progressively more corrective as Slosh rises. Ring out/respawn once and confirm the wizard keeps the authoritative spawn facing until new turn input.
+13. Hold each WASD/arrow direction while sweeping the mouse through a full turn. Confirm keyboard travel stays aligned to the same screen direction while the wizard/staff rotate independently. Check diagonals, bonking while strafing, substantial Slosh, Cauldron sticky/slippery effects, and both host/joiner roles. Confirm the left stick and same-keyboard Player 2 fallback retain their previous behavior.
+14. Step off the Party Hall floor. Confirm the server recovers the wizard to a safe intermission spawn and the camera never follows indefinitely below the hall.
+15. Repeat the Party Hall fall once as host and once as joining client. Confirm recovery is immediate/readable in both windows and does not change score, Favor, Trial ring-out attribution, or event-feed content.
 
 Steam friends-list `Join Game` is not an accepted validation route yet because invite-acceptance handling remains deferred. Do not claim Steam join is passed until the in-game host/search/join/travel path is observed on both accounts.
 
@@ -92,9 +95,10 @@ Steam friends-list `Join Game` is not an accepted validation route yet because i
 1. Install the current `private_test` build through Steam as an authorized user.
 2. Confirm startup map, runtime lighting, and normal local loop.
 3. Complete a Final in a Steam-hosted session, not direct-connect/local.
-4. Record logs for leaderboard queue and flush completion.
-5. Verify the configured `WizardStaff_BestGrandWizardFavor` leaderboard in Steamworks after sufficient propagation time.
-6. Repeat one lower-score result to verify KeepBest behavior rather than assuming overwrite behavior.
+4. Record both machines' logs. Confirm each human owner queues exactly one `server-delivered owner result` for its own slot and no bot, remote proxy, or mismatched slot queues a write.
+5. Confirm both leaderboard flush callbacks report success.
+6. Verify both authenticated accounts on `WizardStaff_BestGrandWizardFavor` in Steamworks after sufficient propagation time.
+7. Repeat one lower-score result to verify KeepBest behavior rather than assuming overwrite behavior.
 
 **Current status:** BuildID `24238419` previously passed a Steam-installed human full-loop playthrough on 2026-07-16, including the in-game Party Hall standings board. BuildID `24343969` verified the main-menu no-session and host-waiting-lobby paths. BuildIDs `24346104` and `24346698` are superseded. BuildID `24394181` human-verified Escape return from Local and hosted Online gameplay, then exposed a secondary local player leaking from Local into a later Host request. Inactive BuildID `24504173` contains the cleanup. After assigning it only to `private_test`, run Play Local -> Escape -> Host Online, confirm only P1 exists and the bell remains blocked, then repeat the bell with a real P2 connection. Steamworks leaderboard submission/read-back remains unverified.
 

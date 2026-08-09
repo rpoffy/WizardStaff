@@ -120,7 +120,8 @@ void AWizardStaffPlayerState::ClientSubmitAuthoritativeSteamMatchResult_Implemen
 		return;
 	}
 
-	WizardGameInstance->SubmitAuthoritativeSteamMatchResult(
+	WizardGameInstance->SubmitServerDeliveredSteamMatchResult(
+		this,
 		MatchGeneration,
 		PlayerSlot,
 		WinnerSlot,

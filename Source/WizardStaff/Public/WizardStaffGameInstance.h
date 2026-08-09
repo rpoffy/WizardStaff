@@ -7,6 +7,7 @@
 #include "WizardStaffGameInstance.generated.h"
 
 class IOnlineSubsystem;
+class AWizardStaffPlayerState;
 class UNetDriver;
 
 UENUM(BlueprintType)
@@ -58,6 +59,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Wizard Staff|Frontend")
 	void ReturnToMainMenu();
 
+	void SetSteamSessionJoinability(bool bJoinable, const TCHAR* Context);
+
 	UFUNCTION(BlueprintPure, Category = "Wizard Staff|Frontend")
 	EWizardStaffFrontendState GetFrontendState() const { return FrontendState; }
 
@@ -67,14 +70,17 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Wizard Staff|Frontend")
 	bool IsFrontendRequestBusy() const;
 
-	void SubmitAuthoritativeSteamMatchResult(
+private:
+	friend class AWizardStaffPlayerState;
+
+	void SubmitServerDeliveredSteamMatchResult(
+		const AWizardStaffPlayerState* DeliveryPlayerState,
 		int32 MatchGeneration,
 		int32 PlayerSlot,
 		int32 WinnerSlot,
 		int32 FinalGrandWizardFavor,
 		int32 FinalRoundWins);
 
-private:
 	void StartSteamHostRequest(bool bFromFrontend);
 	void StartSteamJoinRequest(bool bFromFrontend);
 	int32 BeginFrontendRequest(EWizardStaffFrontendState NewState, const FText& StatusText);
@@ -89,6 +95,8 @@ private:
 	void PrepareFrontendForGameplayTravel();
 	void RemoveExtraLocalPlayersForOnlineTravel(const TCHAR* Context);
 	void ClearSteamFindAndJoinDelegates(const IOnlineSessionPtr& SessionInterface);
+	void ReturnToMainMenuInternal(const FText& StatusText);
+	void ReturnToMainMenuAfterGameplayNetworkFailure();
 	void OpenMainMenuAfterSessionTeardown();
 
 	IOnlineSubsystem* GetSteamSubsystem(bool bLoadOnDemand = true) const;
@@ -122,6 +130,7 @@ private:
 	bool bCreateSteamSessionAfterDestroy = false;
 	bool bFindSteamSessionAfterDestroy = false;
 	bool bReturnToMainMenuAfterSessionDestroy = false;
+	bool bReturningToMenuAfterGameplayNetworkFailure = false;
 	int32 PendingSteamHostRequestGeneration = INDEX_NONE;
 	int32 PendingSteamCreateRequestGeneration = INDEX_NONE;
 	int32 PendingSteamFindRequestGeneration = INDEX_NONE;
@@ -129,4 +138,5 @@ private:
 	int32 FrontendRequestGeneration = 0;
 	EWizardStaffFrontendState FrontendState = EWizardStaffFrontendState::Idle;
 	FText FrontendStatusText;
+	FText GameplayNetworkFailureStatusText;
 };

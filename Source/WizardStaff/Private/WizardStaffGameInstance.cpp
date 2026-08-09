@@ -9,11 +9,13 @@
 #include "TimerManager.h"
 #include "Interfaces/OnlineLeaderboardInterface.h"
 #include "Kismet/GameplayStatics.h"
+#include "Misc/NetworkVersion.h"
 #include "Modules/ModuleManager.h"
 #include "Online/OnlineSessionNames.h"
 #include "OnlineSessionSettings.h"
 #include "OnlineSubsystem.h"
 #include "WizardStaffMainMenuPlayerController.h"
+#include "WizardStaffPlayerState.h"
 
 namespace
 {
@@ -23,12 +25,35 @@ const FName WizardSteamMapSettingKey(TEXT("WIZARDSTAFF_MAP"));
 const FName WizardSteamBuildSettingKey(TEXT("WIZARDSTAFF_BUILD"));
 const FString WizardSteamPrototypeMapPath(TEXT("/Game/Maps/WizardStaff_Prototype"));
 const FString WizardStaffMainMenuMapPath(TEXT("/Game/Maps/WizardStaff_MainMenu"));
-const FString WizardSteamSmokeBuildValue(TEXT("RealAppSteamSmoke1"));
 const FString WizardSteamFavorLeaderboardName(TEXT("WizardStaff_BestGrandWizardFavor"));
 const FString WizardSteamFavorRatedStatName(TEXT("GrandWizardFavor"));
 constexpr int32 WizardSteamSmokeMaxPlayers = 2;
 constexpr float WizardSteamSearchTimeoutSeconds = 30.0f;
 constexpr float WizardSteamJoinTimeoutSeconds = 30.0f;
+
+uint32 GetWizardSteamNetworkVersion()
+{
+	return FNetworkVersion::GetLocalNetworkVersion();
+}
+
+int32 GetWizardSteamBuildUniqueId()
+{
+	return static_cast<int32>(GetWizardSteamNetworkVersion());
+}
+
+FString GetWizardSteamBuildValue()
+{
+	const FString& ProjectVersion = FNetworkVersion::GetProjectVersion();
+	return FString::Printf(
+		TEXT("%s-%08X"),
+		ProjectVersion.IsEmpty() ? TEXT("Unversioned") : *ProjectVersion,
+		GetWizardSteamNetworkVersion());
+}
+
+bool IsWizardPrototypeGameplayWorld(const UWorld* World)
+{
+	return World && World->GetMapName().Contains(TEXT("WizardStaff_Prototype"));
+}
 
 const TCHAR* SteamJoinResultToText(EOnJoinSessionCompleteResult::Type Result)
 {
@@ -54,6 +79,10 @@ const TCHAR* SteamJoinResultToText(EOnJoinSessionCompleteResult::Type Result)
 void UWizardStaffGameInstance::Init()
 {
 	Super::Init();
+	UE_LOG(LogTemp, Log, TEXT("Wizard Staff network compatibility: projectVersion=%s build=%s buildUniqueId=%d."),
+		*FNetworkVersion::GetProjectVersion(),
+		*GetWizardSteamBuildValue(),
+		GetWizardSteamBuildUniqueId());
 
 	if (GEngine)
 	{
@@ -188,29 +217,61 @@ void UWizardStaffGameInstance::OnFrontendRequestTimeout(int32 RequestGeneration,
 
 void UWizardStaffGameInstance::OnNetworkFailure(UWorld* World, UNetDriver* NetDriver, ENetworkFailure::Type FailureType, const FString& ErrorString)
 {
-	if (FrontendState != EWizardStaffFrontendState::ClientTraveling)
+	UE_LOG(LogTemp, Warning, TEXT("Wizard Staff network failure: type=%s driver=%s error=%s frontendState=%d."),
+		ENetworkFailure::ToString(FailureType),
+		NetDriver ? *NetDriver->GetDescription() : TEXT("<none>"),
+		ErrorString.IsEmpty() ? TEXT("<none>") : *ErrorString,
+		static_cast<int32>(FrontendState));
+
+	if (World && World->GetNetMode() == NM_Client && IsWizardPrototypeGameplayWorld(World))
 	{
+		if (!bReturningToMenuAfterGameplayNetworkFailure)
+		{
+			bReturningToMenuAfterGameplayNetworkFailure = true;
+			GameplayNetworkFailureStatusText = FText::FromString(TEXT("Connection to the host was lost. You can host or join another game."));
+			World->GetTimerManager().SetTimerForNextTick(this, &UWizardStaffGameInstance::ReturnToMainMenuAfterGameplayNetworkFailure);
+		}
 		return;
 	}
 
-	SetFrontendState(EWizardStaffFrontendState::Error, FText::FromString(TEXT("Connection failed or timed out. Please try again.")));
-	UE_LOG(LogTemp, Warning, TEXT("Wizard Staff Steam client travel network failure: type=%s driver=%s error=%s."),
-		ENetworkFailure::ToString(FailureType),
-		NetDriver ? *NetDriver->GetDescription() : TEXT("<none>"),
-		ErrorString.IsEmpty() ? TEXT("<none>") : *ErrorString);
+	if (FrontendState == EWizardStaffFrontendState::ClientTraveling)
+	{
+		SetFrontendState(EWizardStaffFrontendState::Error, FText::FromString(TEXT("Connection failed or timed out. Please try again.")));
+		return;
+	}
 }
 
 void UWizardStaffGameInstance::OnTravelFailure(UWorld* World, ETravelFailure::Type FailureType, const FString& ErrorString)
 {
-	if (FrontendState != EWizardStaffFrontendState::ClientTraveling)
+	if (World && World->GetNetMode() == NM_Client && IsWizardPrototypeGameplayWorld(World))
+	{
+		if (!bReturningToMenuAfterGameplayNetworkFailure)
+		{
+			bReturningToMenuAfterGameplayNetworkFailure = true;
+			GameplayNetworkFailureStatusText = FText::FromString(TEXT("The online game could not continue. You can host or join another game."));
+			World->GetTimerManager().SetTimerForNextTick(this, &UWizardStaffGameInstance::ReturnToMainMenuAfterGameplayNetworkFailure);
+		}
+	}
+	else if (FrontendState == EWizardStaffFrontendState::ClientTraveling)
+	{
+		SetFrontendState(EWizardStaffFrontendState::Error, FText::FromString(TEXT("Could not travel to the hosted game.")));
+	}
+	else
 	{
 		return;
 	}
 
-	SetFrontendState(EWizardStaffFrontendState::Error, FText::FromString(TEXT("Could not travel to the hosted game.")));
 	UE_LOG(LogTemp, Warning, TEXT("Wizard Staff Steam client travel failure: type=%s error=%s."),
 		ETravelFailure::ToString(FailureType),
 		ErrorString.IsEmpty() ? TEXT("<none>") : *ErrorString);
+}
+
+void UWizardStaffGameInstance::ReturnToMainMenuAfterGameplayNetworkFailure()
+{
+	bReturningToMenuAfterGameplayNetworkFailure = false;
+	const FText StatusText = GameplayNetworkFailureStatusText;
+	GameplayNetworkFailureStatusText = FText::GetEmpty();
+	ReturnToMainMenuInternal(StatusText);
 }
 
 void UWizardStaffGameInstance::PrepareFrontendForGameplayTravel()
@@ -313,6 +374,11 @@ void UWizardStaffGameInstance::CancelFrontendRequest()
 
 void UWizardStaffGameInstance::ReturnToMainMenu()
 {
+	ReturnToMainMenuInternal(FText::GetEmpty());
+}
+
+void UWizardStaffGameInstance::ReturnToMainMenuInternal(const FText& StatusText)
+{
 	ClearFrontendRequestTimeout();
 	ClearSteamFindAndJoinDelegates(GetSteamSessionInterface(false));
 	SteamSessionSearch.Reset();
@@ -323,7 +389,9 @@ void UWizardStaffGameInstance::ReturnToMainMenu()
 	bCreateSteamSessionAfterDestroy = false;
 	bFindSteamSessionAfterDestroy = false;
 	++FrontendRequestGeneration;
-	SetFrontendState(EWizardStaffFrontendState::Idle, FText::GetEmpty());
+	SetFrontendState(
+		StatusText.IsEmpty() ? EWizardStaffFrontendState::Idle : EWizardStaffFrontendState::Error,
+		StatusText);
 	ResetSteamMatchSubmissionTracking();
 
 	IOnlineSessionPtr SessionInterface = GetSteamSessionInterface(false);
@@ -347,6 +415,49 @@ void UWizardStaffGameInstance::ReturnToMainMenu()
 	}
 
 	OpenMainMenuAfterSessionTeardown();
+}
+
+void UWizardStaffGameInstance::SetSteamSessionJoinability(bool bJoinable, const TCHAR* Context)
+{
+	UWorld* World = GetWorld();
+	if (!World || World->GetNetMode() != NM_ListenServer)
+	{
+		return;
+	}
+
+	IOnlineSessionPtr SessionInterface = GetSteamSessionInterface(false);
+	FNamedOnlineSession* NamedSession = SessionInterface.IsValid()
+		? SessionInterface->GetNamedSession(WizardSteamSmokeSessionName)
+		: nullptr;
+	if (!NamedSession)
+	{
+		return;
+	}
+
+	FOnlineSessionSettings UpdatedSettings = NamedSession->SessionSettings;
+	const bool bAlreadyMatches = UpdatedSettings.bShouldAdvertise == bJoinable
+		&& UpdatedSettings.bAllowJoinInProgress == bJoinable
+		&& UpdatedSettings.bAllowJoinViaPresence == bJoinable;
+	if (bAlreadyMatches)
+	{
+		return;
+	}
+
+	UpdatedSettings.bShouldAdvertise = bJoinable;
+	UpdatedSettings.bAllowJoinInProgress = bJoinable;
+	UpdatedSettings.bAllowJoinViaPresence = bJoinable;
+	UpdatedSettings.bAllowJoinViaPresenceFriendsOnly = false;
+	if (!SessionInterface->UpdateSession(WizardSteamSmokeSessionName, UpdatedSettings, true))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("WizardStaff could not update Steam session joinability to %s at %s."),
+			bJoinable ? TEXT("open") : TEXT("closed"),
+			Context ? Context : TEXT("unknown boundary"));
+		return;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("WizardStaff Steam session joinability update requested: %s at %s."),
+		bJoinable ? TEXT("open") : TEXT("closed"),
+		Context ? Context : TEXT("unknown boundary"));
 }
 
 void UWizardStaffGameInstance::OpenMainMenuAfterSessionTeardown()
@@ -533,9 +644,10 @@ void UWizardStaffGameInstance::FindSteamSmokeSessions(int32 RequestGeneration)
 	FindSteamSessionsCompleteDelegateHandle = SessionInterface->AddOnFindSessionsCompleteDelegate_Handle(
 		FOnFindSessionsCompleteDelegate::CreateUObject(this, &UWizardStaffGameInstance::OnFindSteamSmokeSessionsComplete));
 
-	UE_LOG(LogTemp, Log, TEXT("WizardSteamJoinFirstSession searching Steam lobbies before local compatibility filtering: map=%s build=%s."),
+	UE_LOG(LogTemp, Log, TEXT("WizardSteamJoinFirstSession searching Steam lobbies before local compatibility filtering: map=%s build=%s buildUniqueId=%d."),
 		*WizardSteamPrototypeMapPath,
-		*WizardSteamSmokeBuildValue);
+		*GetWizardSteamBuildValue(),
+		GetWizardSteamBuildUniqueId());
 	if (!SessionInterface->FindSessions(0, SteamSessionSearch.ToSharedRef()))
 	{
 		SessionInterface->ClearOnFindSessionsCompleteDelegate_Handle(FindSteamSessionsCompleteDelegateHandle);
@@ -594,7 +706,8 @@ IOnlineLeaderboardsPtr UWizardStaffGameInstance::GetSteamLeaderboardsInterface(b
 	return SteamSubsystem ? SteamSubsystem->GetLeaderboardsInterface() : nullptr;
 }
 
-void UWizardStaffGameInstance::SubmitAuthoritativeSteamMatchResult(
+void UWizardStaffGameInstance::SubmitServerDeliveredSteamMatchResult(
+	const AWizardStaffPlayerState* DeliveryPlayerState,
 	int32 MatchGeneration,
 	int32 PlayerSlot,
 	int32 WinnerSlot,
@@ -604,6 +717,24 @@ void UWizardStaffGameInstance::SubmitAuthoritativeSteamMatchResult(
 	UWorld* World = GetWorld();
 	if (!World || World->GetNetMode() == NM_Standalone || MatchGeneration <= 0 || PlayerSlot < 0)
 	{
+		return;
+	}
+
+	APlayerController* PlayerController = GetFirstLocalPlayerController();
+	const AWizardStaffPlayerState* LocalPlayerState = PlayerController
+		? PlayerController->GetPlayerState<AWizardStaffPlayerState>()
+		: nullptr;
+	if (!DeliveryPlayerState
+		|| DeliveryPlayerState != LocalPlayerState
+		|| DeliveryPlayerState->IsPlaytestBotSlot()
+		|| PlayerSlot != DeliveryPlayerState->GetWizardDisplaySlot())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("WizardStaff Steam leaderboard rejected non-owner result delivery: deliveredState=%s localState=%s deliveredSlot=%d localSlot=%d bot=%s."),
+			*GetNameSafe(DeliveryPlayerState),
+			*GetNameSafe(LocalPlayerState),
+			PlayerSlot,
+			LocalPlayerState ? LocalPlayerState->GetWizardDisplaySlot() : INDEX_NONE,
+			DeliveryPlayerState && DeliveryPlayerState->IsPlaytestBotSlot() ? TEXT("true") : TEXT("false"));
 		return;
 	}
 
@@ -622,9 +753,7 @@ void UWizardStaffGameInstance::SubmitAuthoritativeSteamMatchResult(
 		return;
 	}
 
-	APlayerController* PlayerController = GetFirstLocalPlayerController();
-	APlayerState* PlayerState = PlayerController ? PlayerController->PlayerState : nullptr;
-	const FUniqueNetIdPtr LocalUserId = PlayerState ? PlayerState->GetUniqueId().GetUniqueNetId() : nullptr;
+	const FUniqueNetIdPtr LocalUserId = LocalPlayerState->GetUniqueId().GetUniqueNetId();
 	if (!LocalUserId.IsValid())
 	{
 		UE_LOG(LogTemp, Warning, TEXT("WizardStaff Steam leaderboard skipped generation %d for P%d: local Steam user ID is unavailable."),
@@ -676,7 +805,7 @@ void UWizardStaffGameInstance::SubmitAuthoritativeSteamMatchResult(
 
 	SubmittedSteamMatchGenerations.Add(MatchGeneration);
 	PendingSteamLeaderboardMatchGeneration = MatchGeneration;
-	UE_LOG(LogTemp, Log, TEXT("WizardStaff Steam leaderboard queued authoritative result: generation=%d P%d favor=%d roundWins=%d finalWinner=%s leaderboard=%s."),
+	UE_LOG(LogTemp, Log, TEXT("WizardStaff Steam leaderboard queued server-delivered owner result: generation=%d P%d favor=%d roundWins=%d finalWinner=%s leaderboard=%s."),
 		MatchGeneration,
 		PlayerSlot + 1,
 		SafeFavor,
@@ -698,6 +827,8 @@ void UWizardStaffGameInstance::CreateSteamSmokeSession(int32 RequestGeneration)
 		return;
 	}
 	PendingSteamCreateRequestGeneration = RequestGeneration;
+	const int32 LocalBuildUniqueId = GetWizardSteamBuildUniqueId();
+	const FString LocalBuildValue = GetWizardSteamBuildValue();
 
 	FOnlineSessionSettings SessionSettings;
 	SessionSettings.bIsLANMatch = false;
@@ -708,17 +839,18 @@ void UWizardStaffGameInstance::CreateSteamSmokeSession(int32 RequestGeneration)
 	SessionSettings.bAllowJoinViaPresenceFriendsOnly = false;
 	SessionSettings.bUseLobbiesIfAvailable = true;
 	SessionSettings.NumPublicConnections = WizardSteamSmokeMaxPlayers;
-	SessionSettings.BuildUniqueId = 1;
+	SessionSettings.BuildUniqueId = LocalBuildUniqueId;
 	SessionSettings.Set(WizardSteamMapSettingKey, WizardSteamPrototypeMapPath, EOnlineDataAdvertisementType::ViaOnlineService);
-	SessionSettings.Set(WizardSteamBuildSettingKey, WizardSteamSmokeBuildValue, EOnlineDataAdvertisementType::ViaOnlineService);
+	SessionSettings.Set(WizardSteamBuildSettingKey, LocalBuildValue, EOnlineDataAdvertisementType::ViaOnlineService);
 
 	CreateSteamSessionCompleteDelegateHandle = SessionInterface->AddOnCreateSessionCompleteDelegate_Handle(
 		FOnCreateSessionCompleteDelegate::CreateUObject(this, &UWizardStaffGameInstance::OnCreateSteamSmokeSessionComplete));
 
-	UE_LOG(LogTemp, Log, TEXT("WizardSteamHost creating smoke session: map=%s maxPlayers=%d build=%s."),
+	UE_LOG(LogTemp, Log, TEXT("WizardSteamHost creating smoke session: map=%s maxPlayers=%d build=%s buildUniqueId=%d."),
 		*WizardSteamPrototypeMapPath,
 		WizardSteamSmokeMaxPlayers,
-		*WizardSteamSmokeBuildValue);
+		*LocalBuildValue,
+		LocalBuildUniqueId);
 
 	if (!SessionInterface->CreateSession(0, WizardSteamSmokeSessionName, SessionSettings))
 	{
@@ -879,6 +1011,8 @@ void UWizardStaffGameInstance::OnFindSteamSmokeSessionsComplete(bool bWasSuccess
 	}
 
 	int32 SelectedResultIndex = INDEX_NONE;
+	const int32 LocalBuildUniqueId = GetWizardSteamBuildUniqueId();
+	const FString LocalBuildValue = GetWizardSteamBuildValue();
 	for (int32 ResultIndex = 0; ResultIndex < SteamSessionSearch->SearchResults.Num(); ++ResultIndex)
 	{
 		const FOnlineSessionSearchResult& SearchResult = SteamSessionSearch->SearchResults[ResultIndex];
@@ -887,15 +1021,21 @@ void UWizardStaffGameInstance::OnFindSteamSmokeSessionsComplete(bool bWasSuccess
 		SearchResult.Session.SessionSettings.Get(WizardSteamMapSettingKey, ResultMap);
 		SearchResult.Session.SessionSettings.Get(WizardSteamBuildSettingKey, ResultBuild);
 
-		UE_LOG(LogTemp, Log, TEXT("WizardSteamJoinFirstSession result %d: map=%s build=%s open=%d/%d ping=%d."),
+		const int32 ResultBuildUniqueId = SearchResult.Session.SessionSettings.BuildUniqueId;
+		UE_LOG(LogTemp, Log, TEXT("WizardSteamJoinFirstSession result %d: map=%s build=%s buildUniqueId=%d expectedBuild=%s expectedBuildUniqueId=%d open=%d/%d ping=%d."),
 			ResultIndex,
 			ResultMap.IsEmpty() ? TEXT("<unset>") : *ResultMap,
 			ResultBuild.IsEmpty() ? TEXT("<unset>") : *ResultBuild,
+			ResultBuildUniqueId,
+			*LocalBuildValue,
+			LocalBuildUniqueId,
 			SearchResult.Session.NumOpenPublicConnections,
 			SearchResult.Session.SessionSettings.NumPublicConnections,
 			SearchResult.PingInMs);
 
-		if (ResultMap == WizardSteamPrototypeMapPath && ResultBuild == WizardSteamSmokeBuildValue)
+		if (ResultMap == WizardSteamPrototypeMapPath
+			&& ResultBuild == LocalBuildValue
+			&& ResultBuildUniqueId == LocalBuildUniqueId)
 		{
 			SelectedResultIndex = ResultIndex;
 			break;

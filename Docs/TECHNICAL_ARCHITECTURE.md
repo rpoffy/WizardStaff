@@ -1,6 +1,6 @@
 # Wizard Staff Technical Architecture
 
-**Last Updated:** 2026-08-04
+**Last Updated:** 2026-08-09
 
 ## Project Baseline
 
@@ -55,6 +55,10 @@ GameMode still gathers authoritative readable state at its established boundarie
 - Clearing an already-empty replicated gameplay feed is a no-op rather than creating a redundant event sequence and forced update.
 
 These are bandwidth/readability guards only. The authoritative timers and progress continue updating at their existing server cadence and still drive gameplay exclusively in GameMode.
+
+Cauldron vial identity follows the same boundary. GameMode retains the authoritative tagged stack used for effects, banking, snapping, and spills. Each wizard replicates only a compact `EWizardCauldronVialType` value for every visible staff position. Client RepNotify code combines that array with `ReplicatedStaffSegmentCount` to apply Speed/Burdening Power colors to runtime meshes; it does not recreate authoritative tags, remove segments, or run vial gameplay. Both RepNotify paths are idempotent so count and type-array delivery order is harmless, including for late relevance.
+
+Online snapped-segment presentation reuses `ReplicatedStaffSnapSequence`; it adds no debris transform stream or new replicated property. After the server-owned segment loss, each machine creates one transient static-mesh component near the readable staff tip, disables collision/overlaps/navigation/replication, animates a short local arc and spin, shrinks it, and destroys it after 0.85 seconds or any existing snap/reset/EndPlay clear. Standalone skips this cue because its established loose physics actor remains the intended local behavior.
 
 ### Player Slot Identity
 
@@ -123,13 +127,17 @@ For online Party Hall only, `AWizardStaffGameMode` freezes the intermission time
 
 **Partially implemented.** `OnlineSubsystemSteam` is enabled and uses the real app configuration currently stored in `DefaultEngine.ini`. UE 5.7 Steam lobby sessions resolve P2P addresses in `steam.<id>` form, so packaged Steam networking now selects `SteamSocketsNetDriver`; `IpNetDriver` remains the fallback when SteamSockets is unavailable, preserving non-Steam/editor/direct-connect diagnosis.
 
-The host path creates a two-player advertised lobby/session with map/build metadata, then opens the project map as a listen server. The join helper requests Steam lobbies broadly, logs and locally filters map/build metadata, joins the first compatible result, resolves a connection string, and travels only after success. Before a retry search, it destroys any stale local named `GameSession`; the matching destroy callback alone may continue into the new search, and cancellation/timeout invalidates that continuation. Search and join each have a 30-second frontend deadline. Network/travel failures update the persistent menu status rather than leaving an indefinite `Joining` state.
+The host path creates a two-player advertised lobby/session with map/build metadata, then opens the project map as a listen server. `BuildUniqueId` and `WIZARDSTAFF_BUILD` derive from Unreal's local network checksum, which includes engine version, project name, and the explicit `ProjectVersion` in `DefaultGame.ini`; search requires the map, readable build value, and numeric ID to match. Bump `ProjectVersion` before packaging a network-incompatible release. The join helper requests Steam lobbies broadly, logs and locally filters those compatibility fields, joins the first compatible result, resolves a connection string, and travels only after success. Before a retry search, it destroys any stale local named `GameSession`; the matching destroy callback alone may continue into the new search, and cancellation/timeout invalidates that continuation. Search and join each have a 30-second frontend deadline.
 
-On 2026-08-01, BuildID `24510908` completed a real two-machine/two-account initial host/search/join connection through the in-game buttons. Rejoining after departure failed in that build; the local named-session teardown correction now builds but still needs the same two-account retry. Steam friends-list invite acceptance is not wired and is not evidence for the supported in-game Join button. Steam remains discovery/connection only and must not alter gameplay authority.
+Joinability follows an explicit prototype contract. The listen server advertises and accepts a replacement player only while it is waiting in Party Hall. Trial countdown, active Trial, Results, and Final boundaries close Steam advertisement/join-in-progress, and `PreLogin` rejects a direct late join outside Party Hall. If the remote player departs, `Logout` aborts the interrupted match through the existing authoritative reset path, creates a clean match generation, returns the remaining host to Party Hall, and reopens the session. No score, Favor, slot identity, or Trial progress is restored for the departed account. On the client, an established gameplay network/travel failure tears down local session state, returns to the main menu, and preserves a readable connection-loss status. These behaviors are **implemented but unverified** until a two-account active-Trial departure/rejoin test passes.
+
+On 2026-08-01, BuildID `24510908` completed a real two-machine/two-account initial host/search/join connection through the in-game buttons. Rejoining after departure failed in that build; the local named-session teardown and host departure/reset contract now build but still need the same two-account retry. Steam friends-list invite acceptance is not wired and is not evidence for the supported in-game Join button. Steam remains discovery/connection only and must not alter gameplay authority.
 
 ### Leaderboard scaffold
 
-`SubmitAuthoritativeSteamMatchResult` queues a KeepBest descending write to `WizardStaff_BestGrandWizardFavor` only for an active Steam session and guards against duplicate match-generation submissions. It is **implemented but unverified** until a private Steam build proves queue, flush, and Steamworks read-back behavior.
+At Final completion, authoritative GameMode computes each human player's result and calls `AWizardStaffPlayerState::SendAuthoritativeSteamMatchResultToOwner`. Its reliable owner-only client RPC is the sole normal delivery route. The receiving PlayerState calls the private `SubmitServerDeliveredSteamMatchResult` GameInstance seam, which rejects anything except the exact first local PlayerState, bots, and mismatched display slots. The GameInstance then writes for that PlayerState's authenticated Steam ID only when an active Steam `GameSession` exists and guards duplicate match generations.
+
+The write is KeepBest/descending against `WizardStaff_BestGrandWizardFavor`. Steam's client API requires the authenticated owner process to perform its own write; therefore this separation protects the in-game network authority boundary but does not provide backend anti-cheat validation against a modified local binary. The scaffold is **implemented but unverified** until a two-account private build proves one write per human owner, queue, flush, KeepBest, and Steamworks read-back behavior.
 
 ## Build and Configuration Notes
 

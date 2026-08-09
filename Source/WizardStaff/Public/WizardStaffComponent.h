@@ -186,6 +186,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Wizard Staff")
 	void RebuildStaffSegmentsForCount(int32 TargetSegmentCount);
 
+	void ApplyStaffSegmentReadableColors(const TArray<FLinearColor>& SegmentColors);
+
 	UFUNCTION(BlueprintCallable, Category = "Wizard Staff")
 	bool RemoveTopStaffSegment(bool bSpawnPhysicsSegment = false);
 
