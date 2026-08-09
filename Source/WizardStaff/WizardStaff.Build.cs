@@ -12,6 +12,9 @@ public class WizardStaff : ModuleRules
 			"CoreUObject",
 			"Engine",
 			"InputCore",
+			"UMG",
+			"Slate",
+			"SlateCore",
 			"OnlineSubsystem",
 			"OnlineSubsystemUtils",
 			"ProceduralMeshComponent"

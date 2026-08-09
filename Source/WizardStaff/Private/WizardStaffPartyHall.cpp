@@ -7,6 +7,7 @@
 #include "Components/TextRenderComponent.h"
 #include "Engine/CollisionProfile.h"
 #include "Kismet/GameplayStatics.h"
+#include "Net/UnrealNetwork.h"
 #include "UObject/ConstructorHelpers.h"
 
 AWizardStaffPartyHall::AWizardStaffPartyHall()
@@ -59,6 +60,10 @@ AWizardStaffPartyHall::AWizardStaffPartyHall()
 	CountdownSignText = CreateSignTextComponent(TEXT("CountdownSignText"), FVector(568.0f, -430.0f, 154.0f), CameraTopWallTextTilt, TEXT("NEXT TRIAL"), FColor::Cyan, 28.0f);
 	PresetSignText = CreateSignTextComponent(TEXT("PresetSignText"), FVector(-355.0f, 330.0f, 8.0f), FRotator(90.0f, 180.0f, 0.0f), TEXT("PRESET"), FColor::Magenta, 26.0f);
 	LeaderSignText = CreateSignTextComponent(TEXT("LeaderSignText"), FVector(570.0f, 430.0f, 116.0f), CameraTopWallTextTilt, TEXT("LEADER"), FColor::Yellow, 23.0f);
+	ReplicatedStandingsText = TEXT("STANDINGS");
+	ReplicatedCountdownText = TEXT("NEXT TRIAL");
+	ReplicatedPresetText = TEXT("PRESET");
+	ReplicatedLeaderText = TEXT("LEADER");
 
 	ReadyBellBaseMesh = CreateBlockComponent(TEXT("ReadyBellBase"), FVector(0.0f, 420.0f, 28.0f), FVector(0.56f, 0.56f, 0.32f));
 	CreateBlockComponent(TEXT("ReadyBellTextPlate"), FVector(0.0f, 330.0f, 2.0f), FVector(1.42f, 0.58f, 0.025f), FRotator::ZeroRotator, false);
@@ -98,6 +103,16 @@ AWizardStaffPartyHall::AWizardStaffPartyHall()
 	CreateSpawnMarker(TEXT("PlayerSpawn_02"), FVector(-235.0f, 250.0f, 120.0f), FRotator(0.0f, -45.0f, 0.0f), FColor::Blue, 1.6f);
 	CreateSpawnMarker(TEXT("PlayerSpawn_03"), FVector(235.0f, -250.0f, 120.0f), FRotator(0.0f, 135.0f, 0.0f), FColor::Green, 1.6f);
 	CreateSpawnMarker(TEXT("PlayerSpawn_04"), FVector(-235.0f, -250.0f, 120.0f), FRotator(0.0f, 45.0f, 0.0f), FColor::Yellow, 1.6f);
+}
+
+void AWizardStaffPartyHall::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(AWizardStaffPartyHall, ReplicatedStandingsText);
+	DOREPLIFETIME(AWizardStaffPartyHall, ReplicatedCountdownText);
+	DOREPLIFETIME(AWizardStaffPartyHall, ReplicatedPresetText);
+	DOREPLIFETIME(AWizardStaffPartyHall, ReplicatedLeaderText);
 }
 
 void AWizardStaffPartyHall::Tick(float DeltaSeconds)
@@ -152,21 +167,49 @@ void AWizardStaffPartyHall::BeginPlay()
 
 void AWizardStaffPartyHall::UpdateIntermissionSigns(const FString& StandingsText, const FString& CountdownText, const FString& PresetText, const FString& LeaderText)
 {
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	const bool bSignTextChanged = ReplicatedStandingsText != StandingsText
+		|| ReplicatedCountdownText != CountdownText
+		|| ReplicatedPresetText != PresetText
+		|| ReplicatedLeaderText != LeaderText;
+	ReplicatedStandingsText = StandingsText;
+	ReplicatedCountdownText = CountdownText;
+	ReplicatedPresetText = PresetText;
+	ReplicatedLeaderText = LeaderText;
+	ApplyIntermissionSignTexts();
+
+	if (bSignTextChanged)
+	{
+		ForceNetUpdate();
+	}
+}
+
+void AWizardStaffPartyHall::OnRep_IntermissionSignTexts()
+{
+	ApplyIntermissionSignTexts();
+}
+
+void AWizardStaffPartyHall::ApplyIntermissionSignTexts()
+{
 	if (StandingsSignText)
 	{
-		StandingsSignText->SetText(FText::FromString(StandingsText));
+		StandingsSignText->SetText(FText::FromString(ReplicatedStandingsText));
 	}
 	if (CountdownSignText)
 	{
-		CountdownSignText->SetText(FText::FromString(CountdownText));
+		CountdownSignText->SetText(FText::FromString(ReplicatedCountdownText));
 	}
 	if (PresetSignText)
 	{
-		PresetSignText->SetText(FText::FromString(PresetText));
+		PresetSignText->SetText(FText::FromString(ReplicatedPresetText));
 	}
 	if (LeaderSignText)
 	{
-		LeaderSignText->SetText(FText::FromString(LeaderText));
+		LeaderSignText->SetText(FText::FromString(ReplicatedLeaderText));
 	}
 }
 

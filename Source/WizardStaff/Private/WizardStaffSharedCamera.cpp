@@ -7,6 +7,8 @@
 #include "GameFramework/SpringArmComponent.h"
 #include "EngineUtils.h"
 #include "WizardStaffComponent.h"
+#include "WizardStaffGameState.h"
+#include "WizardStaffPartyHall.h"
 #include "WizardStaffWizardCharacter.h"
 
 AWizardStaffSharedCamera::AWizardStaffSharedCamera()
@@ -100,12 +102,14 @@ bool AWizardStaffSharedCamera::GetLocalPlayerBounds(FVector& OutCenter, float& O
 
 	TArray<FVector> TrackingLocations;
 	float ExtraZoomRadius = 0.0f;
+	float PartyHallIgnoreBelowZ = PendingRespawnIgnoreBelowZ;
+	const bool bIgnoreFallenPartyHallWizard = GetPartyHallFallCameraThreshold(PartyHallIgnoreBelowZ);
 
 	if (World->GetNetMode() == NM_Client)
 	{
 		for (TActorIterator<AWizardStaffWizardCharacter> It(World); It; ++It)
 		{
-			AddPawnTrackingPoints(*It, TrackingLocations, ExtraZoomRadius);
+			AddPawnTrackingPoints(*It, TrackingLocations, ExtraZoomRadius, bIgnoreFallenPartyHallWizard, PartyHallIgnoreBelowZ);
 		}
 	}
 	else
@@ -121,7 +125,7 @@ bool AWizardStaffSharedCamera::GetLocalPlayerBounds(FVector& OutCenter, float& O
 			const APawn* Pawn = PlayerController->GetPawn();
 			if (Pawn)
 			{
-				AddPawnTrackingPoints(Pawn, TrackingLocations, ExtraZoomRadius);
+				AddPawnTrackingPoints(Pawn, TrackingLocations, ExtraZoomRadius, bIgnoreFallenPartyHallWizard, PartyHallIgnoreBelowZ);
 			}
 		}
 	}
@@ -154,7 +158,33 @@ bool AWizardStaffSharedCamera::GetLocalPlayerBounds(FVector& OutCenter, float& O
 	return true;
 }
 
-void AWizardStaffSharedCamera::AddPawnTrackingPoints(const APawn* Pawn, TArray<FVector>& OutLocations, float& InOutExtraZoom) const
+bool AWizardStaffSharedCamera::GetPartyHallFallCameraThreshold(float& OutIgnoreBelowZ) const
+{
+	UWorld* World = GetWorld();
+	const AWizardStaffGameState* WizardGameState = World ? World->GetGameState<AWizardStaffGameState>() : nullptr;
+	if (!WizardGameState)
+	{
+		return false;
+	}
+
+	const EWizardPartyMatchState PartyState = WizardGameState->GetReplicatedPartyMatchState();
+	if (PartyState != EWizardPartyMatchState::PartyHall && PartyState != EWizardPartyMatchState::Intermission)
+	{
+		return false;
+	}
+
+	for (TActorIterator<AWizardStaffPartyHall> It(World); It; ++It)
+	{
+		if (IsValid(*It))
+		{
+			OutIgnoreBelowZ = It->GetHallBoundsCenter().Z;
+			break;
+		}
+	}
+	return true;
+}
+
+void AWizardStaffSharedCamera::AddPawnTrackingPoints(const APawn* Pawn, TArray<FVector>& OutLocations, float& InOutExtraZoom, bool bIgnoreFallenPartyHallWizard, float PartyHallIgnoreBelowZ) const
 {
 	if (!Pawn)
 	{
@@ -163,7 +193,9 @@ void AWizardStaffSharedCamera::AddPawnTrackingPoints(const APawn* Pawn, TArray<F
 
 	const FVector PawnLocation = Pawn->GetActorLocation();
 	const AWizardStaffWizardCharacter* Wizard = Cast<AWizardStaffWizardCharacter>(Pawn);
-	if (Wizard && Wizard->IsReadableOutOfArenaRespawning() && PawnLocation.Z < PendingRespawnIgnoreBelowZ)
+	if (Wizard
+		&& PawnLocation.Z < (bIgnoreFallenPartyHallWizard ? PartyHallIgnoreBelowZ : PendingRespawnIgnoreBelowZ)
+		&& (bIgnoreFallenPartyHallWizard || Wizard->IsReadableOutOfArenaRespawning()))
 	{
 		return;
 	}

@@ -1,10 +1,22 @@
 # Wizard's Staff Player Guide
 
-**Last Updated:** 2026-07-15
+**Last Updated:** 2026-08-04
 
 Wizard's Staff is a local multiplayer physics party game about goofy wizards building huge, awkward magical staffs and bonking each other with them.
 
 This guide explains the current prototype slice. It is written for players, not developers, and does not include debug or tuning commands.
+
+## Starting A Game
+
+The private-playtest menu has five choices:
+
+- **Play Local:** starts the current local prototype loop.
+- **Host Online Game:** starts the current Steam listen-server test path when Steam is available.
+- **Join Online Game:** searches for and joins the first compatible private Steam test session.
+- **Controls:** shows the input reference.
+- **Quit Game:** closes the game.
+
+The online host/join path is still a test feature. A failed search or join does not affect local play; return to the menu and try again, or use local play.
 
 ## The Goal
 
@@ -171,12 +183,13 @@ Whoever is the Candidate when the Final timer ends wins the whole match.
 
 | Action | Input |
 | --- | --- |
-| Move | `WASD` or arrow keys |
-| Turn | Mouse X or `Q` / `E` |
+| Move | `WASD` or arrow keys, stable relative to the screen |
+| Aim staff / turn | Mouse X or `Q` / `E` |
 | Jump | `Space` |
 | Broom boost | Press `Space` again while airborne |
 | Quick Bonk | Left mouse button or `F` |
 | Use brew reward | Right mouse button |
+| Open/close game menu | `Escape` |
 
 Mugs are collected by touching them. You do not need a button to drink a mug during Mug Run.
 
@@ -190,6 +203,7 @@ Mugs are collected by touching them. You do not need a button to drink a mug dur
 | Broom boost | Press jump again while airborne |
 | Quick Bonk | Right shoulder, such as `RB` or `R1` |
 | Use brew reward | Left shoulder, such as `LB` or `L1` |
+| Open/close game menu | Menu/Start button |
 
 ### Same-Keyboard Player 2 Fallback
 

@@ -38,6 +38,7 @@
 #include "WizardStaffManaMugPickup.h"
 #include "WizardStaffPartyHall.h"
 #include "WizardStaffHUD.h"
+#include "WizardStaffPlayerController.h"
 #include "WizardStaffPlayerState.h"
 #include "WizardStaffPrototypeArena.h"
 #include "WizardStaffPrototypeLighting.h"
@@ -357,6 +358,7 @@ AWizardStaffGameMode::AWizardStaffGameMode()
 	PrimaryActorTick.bCanEverTick = true;
 
 	DefaultPawnClass = AWizardStaffWizardCharacter::StaticClass();
+	PlayerControllerClass = AWizardStaffPlayerController::StaticClass();
 	HUDClass = AWizardStaffHUD::StaticClass();
 	GameStateClass = AWizardStaffGameState::StaticClass();
 	PlayerStateClass = AWizardStaffPlayerState::StaticClass();
@@ -538,6 +540,13 @@ bool AWizardStaffGameMode::ShouldHoldOnlineIntermissionForPlayers() const
 		&& GetConnectedPlayerControllerCount() < 2;
 }
 
+bool AWizardStaffGameMode::ShouldWaitForOnlineHostReadyBell() const
+{
+	return DetectPrototypeSessionMode() == EWizardPrototypeSessionMode::OnlineListenServer
+		&& PartyHallTuning.bEnableReadyBell
+		&& !bPartyHallAllReadyTriggered;
+}
+
 FString AWizardStaffGameMode::GetPrototypeSessionModeText() const
 {
 	return PrototypeSessionModeToText(PrototypeSessionMode);
@@ -662,15 +671,19 @@ void AWizardStaffGameMode::Tick(float DeltaSeconds)
 
 	if ((PartyMatchState == EWizardPartyMatchState::PartyHall || PartyMatchState == EWizardPartyMatchState::Intermission) && ActiveTrialState == EWizardTrialState::WaitingToStart)
 	{
-		if (ShouldHoldOnlineIntermissionForPlayers())
+		const bool bWaitingForOnlinePlayers = ShouldHoldOnlineIntermissionForPlayers();
+		const bool bWaitingForOnlineHostReadyBell = !bWaitingForOnlinePlayers && ShouldWaitForOnlineHostReadyBell();
+		if (bWaitingForOnlinePlayers || bWaitingForOnlineHostReadyBell)
 		{
 			IntermissionRemainingTime = FMath::Max(IntermissionRemainingTime, PartyMatchTuning.IntermissionDuration);
+			// Party Hall is a playable staging space even while its online start gate is frozen.
+			SetWizardPrototypeInputsLocked(false);
 			UpdatePartyHallSigns();
 			DrawMugRunDebug();
 			UpdateLeaderHighlights();
 
 #if !UE_BUILD_SHIPPING
-			if (!bLoggedWaitingForOnlinePlayers)
+			if (!bLoggedWaitingForOnlinePlayers && bWaitingForOnlinePlayers)
 			{
 				UE_LOG(LogTemp, Log, TEXT("WizardStaff online smoke startup holding Party Hall until a second player connects."));
 				bLoggedWaitingForOnlinePlayers = true;
@@ -4216,12 +4229,17 @@ void AWizardStaffGameMode::RespawnWizardsForFinalRound()
 		Wizard->CancelMovementStateForRespawn();
 		Wizard->SyncReplicatedOutOfArenaRespawnStateFromAuthority(false, 0.0f, true);
 
+		const FRotator FinalSpawnRotation = FRotator::ZeroRotator;
 		Wizard->SetActorLocationAndRotation(
 			CircleCenter + FVector(0.0f, 0.0f, 120.0f),
-			FRotator::ZeroRotator,
+			FinalSpawnRotation,
 			false,
 			nullptr,
 			ETeleportType::TeleportPhysics);
+		if (AController* Controller = Wizard->GetController())
+		{
+			Controller->SetControlRotation(FinalSpawnRotation);
+		}
 		Wizard->ForceNetUpdate();
 	}
 }
@@ -5662,6 +5680,43 @@ void AWizardStaffGameMode::NotifyPartyHallReadyBellBonked(AWizardStaffWizardChar
 	const int32 PlayerIndex = GetPlayerIndexForWizard(Wizard);
 	if (PlayerIndex == INDEX_NONE)
 	{
+		return;
+	}
+
+	const bool bOnlineListenServer = DetectPrototypeSessionMode() == EWizardPrototypeSessionMode::OnlineListenServer;
+	if (bOnlineListenServer)
+	{
+		if (GetConnectedPlayerControllerCount() < 2)
+		{
+			SetPartyHallReadyFeedbackMessage(TEXT("Waiting for another player before the host can start the next Trial."), FColor::Cyan);
+			UpdatePartyHallSigns();
+			return;
+		}
+
+		if (PlayerIndex != 0)
+		{
+			SetPartyHallReadyFeedbackMessage(TEXT("Only P1 can ring the Ready Bell online."), FColor::Cyan);
+			UpdatePartyHallSigns();
+			return;
+		}
+
+		EnsurePartyHallReadyStateSize(PlayerIndex + 1);
+		PartyHallReadyPlayers[PlayerIndex] = 1;
+		if (ActivePartyHall)
+		{
+			ActivePartyHall->PlayReadyBellFeedback(PlayerIndex);
+		}
+
+		bPartyHallAllReadyTriggered = true;
+		const float HostStartCountdown = FMath::Max(PartyHallTuning.ReadyBellAllReadyCountdownDuration, 0.0f);
+		IntermissionRemainingTime = FMath::Min(IntermissionRemainingTime, HostStartCountdown);
+		SetPartyHallReadyFeedbackMessage(
+			HostStartCountdown <= 0.0f
+				? TEXT("Host rang the Ready Bell! Starting next Trial.")
+				: FString::Printf(TEXT("Host rang the Ready Bell! Next Trial in %.1fs"), HostStartCountdown),
+			FColor::Yellow);
+		UpdatePartyHallSigns();
+		SyncReplicatedObservableState();
 		return;
 	}
 
@@ -8561,6 +8616,11 @@ bool AWizardStaffGameMode::IsPartyHallActive() const
 float AWizardStaffGameMode::GetCurrentOutOfArenaFallZThreshold() const
 {
 	float FallZThreshold = OutOfArenaRespawnTuning.FallZThreshold;
+	if (IsPartyHallActive())
+	{
+		const float HallFloorZ = ActivePartyHall ? ActivePartyHall->GetHallBoundsCenter().Z : PartyHallSpawnLocation.Z;
+		FallZThreshold = FMath::Max(FallZThreshold, HallFloorZ - FMath::Max(PartyHallTuning.FallRecoveryDistanceBelowFloor, 0.0f));
+	}
 	if (ShouldUseStaffsAtDawnArena() && ActiveStaffsAtDawnArena)
 	{
 		FallZThreshold = FMath::Max(FallZThreshold, ActiveStaffsAtDawnArena->GetRingOutFallZ());
@@ -8576,7 +8636,21 @@ void AWizardStaffGameMode::UpdateOutOfArenaRespawns(float DeltaSeconds)
 		return;
 	}
 
-	// Countdown, Results, and Party Hall deliberately stage wizards away from the active Trial bounds.
+	if (IsPartyHallIntermissionActive())
+	{
+		ClearPendingOutOfArenaRespawns();
+		for (AWizardStaffWizardCharacter* Wizard : GetCurrentWizards())
+		{
+			if (Wizard && IsWizardOutOfArena(Wizard))
+			{
+				// Party Hall falls are safety recoveries, not scored Trial ring-outs.
+				RespawnWizardInArena(Wizard);
+			}
+		}
+		return;
+	}
+
+	// Countdown and Results deliberately stage wizards away from the active Trial bounds.
 	// Treating those positions as ring-outs can race the phase teleport and produce empty-arena flashes.
 	if (ActiveTrialState != EWizardTrialState::Active)
 	{
@@ -8728,6 +8802,10 @@ void AWizardStaffGameMode::RespawnWizardInArena(AWizardStaffWizardCharacter* Wiz
 		false,
 		nullptr,
 		ETeleportType::TeleportPhysics);
+	if (Controller)
+	{
+		Controller->SetControlRotation(RespawnTransform.Rotator());
+	}
 	Wizard->SyncReplicatedOutOfArenaRespawnStateFromAuthority(false, 0.0f, true);
 	Wizard->ForceNetUpdate();
 

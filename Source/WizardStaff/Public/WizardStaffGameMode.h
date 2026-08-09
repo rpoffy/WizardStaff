@@ -508,6 +508,9 @@ struct FWizardPartyHallTuning
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Party Hall|Ready Bell", meta = (ClampMin = "0.0"))
 	float ReadyBellFeedbackDuration = 1.75f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Party Hall|Safety", meta = (ClampMin = "0.0"))
+	float FallRecoveryDistanceBelowFloor = 120.0f;
 };
 
 USTRUCT(BlueprintType)
@@ -1840,6 +1843,7 @@ protected:
 	void RefreshPrototypeSessionMode(const TCHAR* Reason);
 	bool IsStandaloneLocalPrototypeSession() const;
 	bool ShouldHoldOnlineIntermissionForPlayers() const;
+	bool ShouldWaitForOnlineHostReadyBell() const;
 	int32 GetConnectedPlayerControllerCount() const;
 	void AssignOnlineScaffoldPlayerSlot(AController* Controller);
 	int32 FindFirstAvailablePlayerSlot(const AWizardStaffPlayerState* PlayerStateToIgnore = nullptr) const;

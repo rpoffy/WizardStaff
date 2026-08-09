@@ -20,6 +20,7 @@ public:
 	AWizardStaffPartyHall();
 
 	virtual void Tick(float DeltaSeconds) override;
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 	static FName GetReadyBellComponentTag();
 
@@ -88,6 +89,22 @@ protected:
 	UTextRenderComponent* CreateSignTextComponent(FName Name, const FVector& RelativeLocation, const FRotator& RelativeRotation, const FString& InitialText, const FColor& Color, float TextSize);
 	UArrowComponent* CreateSpawnMarker(FName Name, const FVector& RelativeLocation, const FRotator& RelativeRotation, const FColor& Color, float ArrowSize);
 	void GatherSpawnMarkers(const FString& NamePrefix, TArray<UArrowComponent*>& OutMarkers) const;
+	void ApplyIntermissionSignTexts();
+
+	UFUNCTION()
+	void OnRep_IntermissionSignTexts();
+
+	UPROPERTY(ReplicatedUsing = OnRep_IntermissionSignTexts)
+	FString ReplicatedStandingsText;
+
+	UPROPERTY(ReplicatedUsing = OnRep_IntermissionSignTexts)
+	FString ReplicatedCountdownText;
+
+	UPROPERTY(ReplicatedUsing = OnRep_IntermissionSignTexts)
+	FString ReplicatedPresetText;
+
+	UPROPERTY(ReplicatedUsing = OnRep_IntermissionSignTexts)
+	FString ReplicatedLeaderText;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Party Hall|Signs")
 	TObjectPtr<UTextRenderComponent> StandingsSignText;

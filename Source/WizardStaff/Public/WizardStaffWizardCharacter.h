@@ -443,6 +443,7 @@ public:
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void PossessedBy(AController* NewController) override;
 	virtual void OnRep_PlayerState() override;
+	virtual void FaceRotation(FRotator NewControlRotation, float DeltaTime = 0.0f) override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 
@@ -756,8 +757,11 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Wizard|Movement", meta = (ClampMin = "0.0", ToolTip = "Global movement input multiplier before Slosh, Staff Heft, staff obstruction, and hit reaction penalties bend control."))
 	float MoveInputScale = 1.0f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Wizard|Movement", meta = (ClampMin = "0.0", ToolTip = "Base wizard turn rate used by keyboard, mouse, gamepad stick, and the player-2 keyboard fallback after input axis scaling."))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Wizard|Movement", meta = (ClampMin = "0.0", ToolTip = "Base wizard turn rate used by keyboard, gamepad stick, and the player-2 keyboard fallback after input axis scaling."))
 	float TurnRateDegreesPerSecond = 180.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Wizard|Movement", meta = (ClampMin = "0.0", ToolTip = "Frame-independent mouse yaw in degrees per post-config MouseTurn axis unit. The default preserves the previous feel at approximately 60 FPS."))
+	float MouseTurnDegreesPerAxisUnit = 3.0f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Wizard|Movement", meta = (ClampMin = "0.0", ToolTip = "Base walk speed. Slosh, Staff Heft, staff obstruction, and hit reactions should make this feel bent, not unreadable."))
 	float WalkSpeed = 520.0f;
@@ -1009,11 +1013,19 @@ public:
 	float HitKnockdownTimeRemaining = 0.0f;
 
 protected:
+	void HandleReturnToMenuPressed();
 	void HandleJumpPressed();
 	void HandleJumpReleased();
 	void MoveForward(float Value);
 	void MoveRight(float Value);
+	void MoveKeyboardForward(float Value);
+	void MoveKeyboardRight(float Value);
+	void ApplyDirectionalMovementInput(const FVector& WorldDirection, float Value);
+	void GetKeyboardMovementBasis(FVector& OutForward, FVector& OutRight) const;
 	void Turn(float Value);
+	void TurnMouse(float Value);
+	void ApplyTurnInput(float Value, float TurnDegrees);
+	void ApplyFacingYawDelta(float YawDeltaDegrees);
 	void RefreshColorFromPlayerState();
 	void RebuildStaffVisualsFromReplicatedSegmentCount();
 
@@ -1067,9 +1079,6 @@ protected:
 
 	UFUNCTION()
 	void OnRep_ReplicatedCauldronStickyTether();
-
-	UFUNCTION(Server, Unreliable)
-	void ServerSetFacingYaw(float NewYaw);
 
 	UFUNCTION(Server, Reliable)
 	void ServerUseReward();

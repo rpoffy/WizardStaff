@@ -1,13 +1,13 @@
 "AppBuild"
 {
     "AppID" "4954290"
-    "Desc" "Wizard Staff current private playtest candidate 2026-07-16"
+    "Desc" "Wizard Staff stable WASD and independent mouse aim private test 2026-08-04"
 
     // Approved upload. This creates an inactive Steamworks build.
     "Preview" "0"
 
-    "ContentRoot" "C:\\Users\\Roger\\Documents\\Wizard's Staff game\\Build\\SteamPipe\\content"
-    "BuildOutput" "C:\\Users\\Roger\\Documents\\Wizard's Staff game\\Build\\SteamPipe\\output"
+    "ContentRoot" "C:\\Users\\Roger\\Documents\\WizardStaffGame\\Build\\SteamPipe\\content"
+    "BuildOutput" "C:\\Users\\Roger\\Documents\\WizardStaffGame\\Build\\SteamPipe\\output"
 
     // Deliberately empty: never assign a branch from this upload script.
     "SetLive" ""

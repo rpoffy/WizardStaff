@@ -11,7 +11,7 @@ echo.
 echo At the Steam prompt, enter these commands one at a time:
 echo.
 echo   login YOUR_STEAM_LOGIN_NAME
-echo   run_app_build "C:\Users\Roger\Documents\Wizard's Staff game\Build\SteamPipe\scripts\app_build_4954290_upload.vdf"
+echo   run_app_build "C:\Users\Roger\Documents\WizardStaffGame\Build\SteamPipe\scripts\app_build_4954290_upload.vdf"
 echo   quit
 echo.
 echo Enter your password and Steam Guard response only in SteamCMD.

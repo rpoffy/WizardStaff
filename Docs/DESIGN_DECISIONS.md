@@ -1,6 +1,6 @@
 # Design Decisions
 
-**Last Updated:** 2026-07-16
+**Last Updated:** 2026-08-04
 
 This file records durable choices, not implementation chronology. Current evidence belongs in [CURRENT_STATE.md](CURRENT_STATE.md).
 
@@ -17,7 +17,17 @@ This file records durable choices, not implementation chronology. Current eviden
 | Dirty-check replicated readability mirrors | PlayerState forces updates only after real changes; display timers use 0.1-second and progress uses 1% readable thresholds. |
 | Assigned PlayerState display slot is stable runtime identity | Preserve `WizardDisplaySlot`; new PlayerStates take the first unused slot. `PlayerId`/iterator order are pre-assignment fallbacks only. Reconnect restoration remains deferred. |
 | Retain direct-connect as a development fallback | It is verified and remains faster to diagnose than the immature Steam join path. |
-| Use the project-owned startup map with runtime presentation | `/Game/Maps/WizardStaff_Prototype` replaced the engine OpenWorld fallback; runtime actors provide most prototype spaces and fallback lighting. |
+| Tear down stale local Steam session state before retrying Join | A joining process may retain a named `GameSession` after leaving or failing. A new in-game Join request destroys that local session first, then starts discovery only from the guarded completion callback; this is retry cleanup, not reconnect UX or gameplay authority. |
+| Use UE 5.7 SteamSockets for Steam lobby P2P travel, with IP fallback | OnlineSubsystemSteam lobby connect strings use `steam.<id>` addresses that the prior IP-only driver contract could not carry. The fallback keeps editor and non-Steam/direct-connect diagnosis available when SteamSockets is unavailable. |
+| Use a small C++ main menu for private playtest entry | The default map is a menu-only frontend. Local opens the established prototype map; online buttons delegate to the existing Steam helpers. This avoids an auto-start match and adds no gameplay or lobby authority. |
+| Use a local gameplay submenu instead of Escape immediately leaving | Escape/controller-menu opens Resume, Controls, and an explicit Return action. It blocks only the invoking local controller's input and never pauses or controls an online match; Return reuses the established session teardown and frontend travel. |
+| Online Party Hall uses a host-owned Ready Bell start gate | Online hosts and joining players remain free to move in Party Hall while the timer is frozen. After a second controller joins, P1/the listen host bonks the existing Ready Bell to begin the normal short countdown. Local play retains its existing all-active-player ready behavior. |
+| Party Hall falls use immediate safety recovery, not Trial ring-out rules | Intermission is a staging/social space. Leaving its floor returns the wizard to their Party Hall spawn without score, Favor, attribution, delay, or ring-out telemetry; camera framing ignores the fallen wizard below the hall floor during recovery. |
+| Replicate Party Hall board snapshots, not text-component behavior | GameMode authors the values on the server; the Party Hall actor replicates compact strings that clients apply visually. This supports late joins without giving board data gameplay authority. |
+| Treat mouse delta separately from keyboard/gamepad turn rate | Mouse movement is already accumulated per frame and must not be multiplied by frame time. Q/E, right-stick, and fallback turning remain degrees-per-second inputs. Both retain the same gameplay impairment modifiers. |
+| Decouple primary keyboard movement from wizard facing | WASD and arrow keys use the stable top-down camera basis so mouse aim can rotate the wizard/staff without rotating the player's movement frame. Left-stick and same-keyboard fallback behavior remain unchanged to avoid an unrequested controller/couch redesign. |
+| Carry joiner facing through CharacterMovement control rotation | Autonomous facing should share Unreal's existing client-move channel instead of racing movement correction through a separate yaw RPC. Server validation remains bounded, and replicated Slosh may inform local movement prediction without becoming authoritative gameplay state. |
+| Use project-owned frontend and gameplay maps with runtime presentation | `/Game/Maps/WizardStaff_MainMenu` is the frontend and `/Game/Maps/WizardStaff_Prototype` remains the gameplay map; together they replaced the engine OpenWorld fallback while runtime actors provide prototype spaces and fallback lighting. |
 | Preserve local loose snapped physics; do not replicate debris physics | Online uses server-owned segment loss/count and minimal cues without client debris authority. |
 | Use readable prototype presentation before production UI | Canvas HUD, markers, event feed, ritual actors, and fallback lighting remain scaffolding. |
 | Tie Cauldron hazards to vial deposits | Each successful Speed/Burdening Power transfer gets one server-owned 25% matching slippery/sticky roll; unrelated timed hazards are removed. |

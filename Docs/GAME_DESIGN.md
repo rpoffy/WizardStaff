@@ -1,6 +1,6 @@
 # Wizard Staff Game Design
 
-**Last Updated:** 2026-07-15
+**Last Updated:** 2026-08-04
 
 ## Design Pillars
 
@@ -67,4 +67,4 @@ The following are not current approved implementation work unless the user expli
 
 ## Player Controls
 
-The repository's input configuration currently includes keyboard/mouse, gamepad, and same-keyboard fallback mappings. The player-facing reference is [PlayerGuide.md](PlayerGuide.md). Treat that guide as a player aid; confirm current input behavior in `Config/DefaultInput.ini` before changing controls.
+The repository's input configuration currently includes keyboard/mouse, gamepad, and same-keyboard fallback mappings. Primary-player WASD/arrow movement is screen-relative and independent of wizard facing, while mouse/Q/E aim the wizard and staff. Gamepad and same-keyboard fallback retain their existing directional semantics. The player-facing reference is [PlayerGuide.md](PlayerGuide.md). Treat that guide as a player aid; confirm current input behavior in `Config/DefaultInput.ini` before changing controls.

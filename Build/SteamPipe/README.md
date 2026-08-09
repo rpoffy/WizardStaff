@@ -120,6 +120,95 @@ Current private playtest candidate on 2026-07-16:
 - The uploaded build was manually assigned only to password-protected `private_test`; `default` remains unchanged on Build `24152860`.
 - Steam installation and a human full-loop pass of Build `24238419` completed successfully on 2026-07-16. The in-game Party Hall standings board was also observed working; this does not yet verify Steamworks leaderboard write/flush/read-back.
 
+Latest inactive candidate on 2026-07-22:
+
+- Steam Build ID: `24343969`.
+- Depot manifest ID: `4898219811341155544`.
+- UE 5.7 package, cook, stage, archive, staging refresh, and inactive SteamPipe upload completed successfully.
+- This candidate contains the main-menu Steam on-demand subsystem initialization fix.
+- `SetLive` remained empty during upload. The build was subsequently assigned manually only to password-protected `private_test` on 2026-07-22; `default` remains unchanged. Perform the next Steam-launched menu retest from `private_test`.
+
+Superseded controller-owned action-mapping Escape-return candidate on 2026-07-22:
+
+- Steam Build ID: `24346104`.
+- Depot manifest ID: `4016253160872424587`.
+- UE 5.7 package, cook, stage, archive, staging refresh, and inactive SteamPipe upload completed successfully.
+- This candidate moves the online-only Escape/controller-back return route to the gameplay PlayerController, then destroys the local session record before opening the main menu.
+- `SetLive` remained empty. The build was assigned only to `private_test`, then failed its human Escape retest because the handler did not fire.
+
+Superseded inactive direct-key Escape-return candidate on 2026-07-23:
+
+- Steam Build ID: `24346698`.
+- Depot manifest ID: `7182046382881412670`.
+- UE 5.7 package, cook, stage, archive, staging refresh, and inactive SteamPipe upload completed successfully.
+- This candidate bound Escape/controller-back directly on a custom local gameplay PlayerController, replacing the action-mapping route that failed human testing in Build `24346104`.
+- Local PIE then lost keyboard control. The custom controller was removed from current source on 2026-07-24, so this build must not be assigned to `private_test` or `default`.
+
+Current `private_test` menu-input and Party Hall readiness candidate on 2026-07-25:
+
+- Steam Build ID: `24393938`.
+- Windows Development package completed a fresh UE 5.7 build, cook, stage, archive, and SteamPipe upload successfully.
+- SteamPipe mapped 49 runtime files totaling approximately 543 MB; staging excluded `steam_appid.txt`, `.pdb` files, and saved-game folders.
+- This candidate removes the frontend widget and restores game-only input before Local, Steam-host, and Steam-join travel. It also contains the online Party Hall Ready Bell gate.
+- The build was assigned manually to password-protected `private_test`; `default` remained unchanged.
+- Human Steam testing verified Local and Host gameplay handoff and the frozen host-only Party Hall timer. Escape did not return either Local or Online play to the menu.
+- Current source now binds the return action on the wizard gameplay input component and builds successfully. A human external `-game` check verified the Local route before the next package.
+
+Latest inactive Escape-return candidate on 2026-07-25:
+
+- Steam Build ID: `24394181`.
+- Depot manifest ID: `3394164229278545451`.
+- UE 5.7 editor build and Windows Development package/cook/stage/archive completed successfully.
+- SteamPipe staged 49 files totaling 569,380,158 bytes and excluded `.pdb`, `steam_appid.txt`, and Saved data.
+- The upload changed no Steam branch because `SetLive` remained empty. Assign only to password-protected `private_test`; do not alter `default`.
+- Required human Steam checks: Local Escape returns to the menu, Steam host Escape destroys/leaves the session and returns to the menu, and P1 starts the Trial countdown by bonking the Ready Bell after P2 joins.
+- Packaging retained the known nonfatal duplicate `Map:/Game/Maps/WizardStaff_Prototype` PrimaryAssetID warning for the main-menu map; cook completed with zero errors.
+- Build `24394181` was assigned to `private_test`; human testing verified Local and Online Escape return. The same Local-then-Host run exposed an extra local P2 leaking into the hosted session. Current source removes secondary local players before Steam host/join setup and builds successfully, but that follow-up fix has not yet been packaged or uploaded.
+
+Latest inactive Local-to-Online player-cleanup candidate on 2026-07-31:
+
+- Steam Build ID: `24504173`.
+- Depot manifest ID: `8539026792454398946`.
+- UE 5.7 Windows Development build, cook, stage, archive, staging refresh, and SteamPipe upload completed successfully.
+- SteamPipe staged 49 files totaling 569,381,182 bytes and excluded `.pdb`, `steam_appid.txt`, and Saved data.
+- This candidate removes secondary `ULocalPlayer` instances immediately before Steam host/join setup so Play Local -> Escape -> Host Online cannot carry the local P2/bot into the hosted session.
+- `SetLive` remained empty; no Steam branch changed during upload. Assign only to password-protected `private_test`; do not alter `default`.
+- Required human Steam check: Play Local -> Escape -> Host Online. Confirm only P1 exists, the Ready Bell remains blocked without a real P2, a real P2 can join, P1 can then start the countdown, and Escape still returns to the menu.
+- Packaging retained the known nonfatal duplicate `Map:/Game/Maps/WizardStaff_Prototype` PrimaryAssetID warning for the main-menu map; cook completed successfully.
+
+Latest inactive SteamSockets join/timeout candidate on 2026-08-01:
+
+- Steam Build ID: `24510908`.
+- Depot manifest ID: `6957954008743286605`.
+- Description: `Wizard Staff SteamSockets join and timeout private test 2026-08-01`.
+- UE 5.7 Windows Development build, cook, stage, archive, staging refresh, and SteamPipe upload completed successfully.
+- SteamPipe staged 46 files totaling 569,235,030 bytes. Staging hygiene excluded `.pdb`, `steam_appid.txt`, `Manifest_*.txt`, `.gitkeep`, and Saved data.
+- This candidate adds the SteamSockets P2P net driver with IP fallback, broader lobby discovery with local compatibility filtering, and bounded search/join/network failure feedback.
+- `SetLive` remained empty; no Steam branch changed during upload. Assign only to password-protected `private_test`; do not alter `default`.
+- Required human Steam check: both accounts install the same `private_test` BuildID, host through the in-game Host action, and join through the in-game Join action. Confirm connection or clear failure feedback within 30 seconds. Steam friends-list Join Game remains intentionally unsupported in this candidate.
+
+Latest inactive multiplayer-cleanup candidate on 2026-08-01:
+
+- Steam Build ID: `24513565`.
+- Depot manifest ID: `5609624058440909275`.
+- Description: `Wizard Staff multiplayer cleanup steps 1-6 private test 2026-08-01`.
+- UE 5.7 Win64 Development build, cook, stage, archive, staging refresh, and SteamPipe upload completed successfully.
+- SteamPipe staging contained 44 files totaling 531,890,886 bytes and no `.pdb`, `steam_appid.txt`, `Manifest_*.txt`, or Saved data.
+- This candidate contains the six focused post-first-online-test cleanup steps: stale-session rejoin cleanup, client-facing board data, intermission ring-out recovery/camera exclusion, normalized look sensitivity, client movement/facing improvements, and the local in-game Resume/Controls/Return to Main Menu submenu.
+- `SetLive` remained empty; no Steam branch changed during upload. Assign only to password-protected `private_test`; do not alter `default`.
+- Required human checks: Local and Steam-hosted Escape opens the submenu without pausing the match; Resume restores control; Controls is readable; Return to Main Menu tears down the local Steam session; and the prior two-account online flow still connects and plays normally.
+
+Latest inactive stable-WASD candidate on 2026-08-04:
+
+- Steam Build ID: `24561669`.
+- Depot manifest ID: `4223478960010625334`.
+- Description: `Wizard Staff stable WASD and independent mouse aim private test 2026-08-04`.
+- UE 5.7 Win64 Development build, cook, stage, archive, staging refresh, and SteamPipe upload completed successfully.
+- SteamPipe staging contained 44 files totaling 531,888,326 bytes and no `.pdb`, `steam_appid.txt`, `Manifest_*.txt`, or Saved data.
+- This candidate makes primary-player WASD/arrow movement stable relative to the top-down camera while mouse/Q/E independently aim the wizard and staff. Left-stick and same-keyboard Player 2 fallback behavior remain unchanged.
+- `SetLive` remained empty; no Steam branch changed during upload. Assign only to password-protected `private_test`; do not alter `default`.
+- Required human checks: hold each WASD direction while sweeping mouse aim through a full turn, check diagonals and bonking while strafing, then repeat with Slosh and in both host/joiner roles.
+
 ## Sources Checked
 
 - Valve SteamPipe upload/build script documentation: https://partner.steamgames.com/doc/sdk/uploading

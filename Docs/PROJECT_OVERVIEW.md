@@ -1,6 +1,6 @@
 # Wizard Staff Project Overview
 
-**Last Updated:** 2026-07-15
+**Last Updated:** 2026-08-01
 **Evidence basis:** Current C++ source/configuration, existing documentation, build records, and recorded human playtest observations.
 
 Wizard Staff is a comedic multiplayer party-game prototype about wizards who drink mana beverages, become increasingly sloshed, grow unwieldy staffs, and create problems for one another. The project is local-first, has a direct-connect listen-server baseline, and has a narrowly scoped Steam development integration for private testing.
@@ -12,7 +12,7 @@ Wizard Staff is a comedic multiplayer party-game prototype about wizards who dri
 | Normal match loop | **Implemented and verified locally and in two-player listen-server PIE** | Party Hall separates Mug Run, Staffs at Dawn, Cauldron Catastrophe, and Grand Wizard Final. Full-loop and cleanup-focused sessions passed on 2026-07-15. |
 | Local multiplayer | **Implemented and verified** | Local one-human-plus-bot and couch workflows are represented in current code and repeatedly documented as preserved. |
 | Direct-connect online | **Implemented and verified** | A host listen path and `open 127.0.0.1` client path have recorded successful full-loop validation. |
-| Steam session smoke path | **Partially implemented** | Steam host/session creation is observed. A same-machine join limitation was observed; two-machine/two-account search/join/travel remains unverified. |
+| Steam session smoke path | **Implemented and verified for initial connection** | BuildID `24510908` completed a human-observed two-machine/two-account Steam host/search/join connection on 2026-08-01. Rejoin/session cleanup, online smoothness, client presentation, and private-playtest UX still have confirmed gaps. |
 | Steam leaderboard submission | **Implemented but unverified** | The result-submission scaffold and Steamworks leaderboard configuration exist, but a real write/flush/read-back test is not recorded. |
 | Cauldron Catastrophe | **Implemented and verified** | The vial, banking, hazard, curse, and scoring Trial is the third normal Trial. Full-loop transitions and the focused hazard, long-staff intake, slippery-skid, and cursed-bombardment behavior are human-verified. |
 | Production release systems | **Planned / deferred** | Production lobby UX, matchmaking, reconnect, host migration, full UI, and other release work are intentionally out of scope. |
@@ -27,7 +27,7 @@ Wizard Staff is a comedic multiplayer party-game prototype about wizards who dri
 | Long staffs create navigation and collision problems | **Implemented and verified** | Staff collision, arena props, obstruction tracking, stress, and shared camera behaviors exist. |
 | Wizards bonk one another and may snap segments | **Implemented and verified** | Quick Bonk, Staff Clash, stress, snapping, local loose segment behavior, and online snap readability scaffolding exist. |
 | Staff problems should arise naturally rather than from arbitrary stuck states | **Established design direction; partially met** | This is a current design tension: `UWizardStaffComponent` includes scripted obstruction detection, control reduction, recovery, and a failsafe. Any future change should be explicitly approved and tested rather than silently removing safety behavior. |
-| Steam private playtest preparation | **Partially implemented** | Steam app/depot/private build history is documented; private access/package management and multiplayer validation are still incomplete. |
+| Steam private playtest preparation | **Partially implemented** | Steam app/depot/private build history and a successful two-account connection are documented. A local-only in-game Escape submenu now builds but awaits human validation; rejoin behavior, online presentation/performance, and broader multiplayer validation remain incomplete. |
 
 ## Normal Prototype Loop
 

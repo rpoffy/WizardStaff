@@ -28,6 +28,7 @@
 #include "WizardStaffGameState.h"
 #include "WizardStaffHUD.h"
 #include "WizardStaffPlayerState.h"
+#include "WizardStaffPlayerController.h"
 #include "WizardStaffPartyHall.h"
 #include "WizardStaffPlaytestBotComponent.h"
 
@@ -540,12 +541,16 @@ void AWizardStaffWizardCharacter::SetupPlayerInputComponent(UInputComponent* Pla
 
 	PlayerInputComponent->BindAxis(TEXT("MoveForward"), this, &AWizardStaffWizardCharacter::MoveForward);
 	PlayerInputComponent->BindAxis(TEXT("MoveRight"), this, &AWizardStaffWizardCharacter::MoveRight);
+	PlayerInputComponent->BindAxis(TEXT("KeyboardMoveForward"), this, &AWizardStaffWizardCharacter::MoveKeyboardForward);
+	PlayerInputComponent->BindAxis(TEXT("KeyboardMoveRight"), this, &AWizardStaffWizardCharacter::MoveKeyboardRight);
 	PlayerInputComponent->BindAxis(TEXT("Turn"), this, &AWizardStaffWizardCharacter::Turn);
+	PlayerInputComponent->BindAxis(TEXT("MouseTurn"), this, &AWizardStaffWizardCharacter::TurnMouse);
 	PlayerInputComponent->BindAction(TEXT("Jump"), IE_Pressed, this, &AWizardStaffWizardCharacter::HandleJumpPressed);
 	PlayerInputComponent->BindAction(TEXT("Jump"), IE_Released, this, &AWizardStaffWizardCharacter::HandleJumpReleased);
 	PlayerInputComponent->BindAction(TEXT("DrinkMug"), IE_Pressed, this, &AWizardStaffWizardCharacter::DrinkMug);
 	PlayerInputComponent->BindAction(TEXT("QuickBonk"), IE_Pressed, this, &AWizardStaffWizardCharacter::QuickBonk);
 	PlayerInputComponent->BindAction(TEXT("UseReward"), IE_Pressed, this, &AWizardStaffWizardCharacter::UseReward);
+	PlayerInputComponent->BindAction(TEXT("ReturnToMenu"), IE_Pressed, this, &AWizardStaffWizardCharacter::HandleReturnToMenuPressed);
 
 #if !UE_BUILD_SHIPPING
 	PlayerInputComponent->BindAction(TEXT("DebugAddStaffSegment"), IE_Pressed, this, &AWizardStaffWizardCharacter::DebugAddStaffSegment);
@@ -561,6 +566,19 @@ void AWizardStaffWizardCharacter::SetupPlayerInputComponent(UInputComponent* Pla
 	PlayerInputComponent->BindAction(TEXT("DebugSetHighSlosh"), IE_Pressed, this, &AWizardStaffWizardCharacter::DebugSetHighSlosh);
 	PlayerInputComponent->BindAction(TEXT("DebugSetAbsurdSlosh"), IE_Pressed, this, &AWizardStaffWizardCharacter::DebugSetAbsurdSlosh);
 #endif
+}
+
+void AWizardStaffWizardCharacter::HandleReturnToMenuPressed()
+{
+	if (!IsLocallyControlled())
+	{
+		return;
+	}
+
+	if (AWizardStaffPlayerController* WizardController = Cast<AWizardStaffPlayerController>(GetController()))
+	{
+		WizardController->ToggleInGameMenu();
+	}
 }
 
 void AWizardStaffWizardCharacter::ApplyPlayerColor(int32 PlayerIndex)
@@ -803,7 +821,7 @@ void AWizardStaffWizardCharacter::AddManaSloshForStaffGrowth(int32 SegmentCount,
 
 float AWizardStaffWizardCharacter::GetManaSloshAlpha() const
 {
-	return FMath::Clamp(ManaSlosh / FMath::Max(ManaTuning.MaxSlosh, 1.0f), 0.0f, 1.0f);
+	return GetReadableManaSloshAlpha();
 }
 
 float AWizardStaffWizardCharacter::GetReadableManaSlosh() const
@@ -2294,111 +2312,169 @@ void AWizardStaffWizardCharacter::ServerRequestBroomBoost_Implementation()
 
 void AWizardStaffWizardCharacter::MoveForward(float Value)
 {
-	if (IsPrototypeInputBlockedForLocalInput())
-	{
-		return;
-	}
-
-	if (!FMath::IsNearlyZero(Value))
-	{
-		if (StaffComponent)
-		{
-			StaffComponent->NotifyOwnerMovementInput(FMath::Abs(Value));
-		}
-		const float StaffControlMultiplier = StaffComponent ? StaffComponent->GetControlInputMultiplier() : 1.0f;
-		AddMovementInput(GetActorForwardVector(), Value * MoveInputScale * StaffControlMultiplier * GetManaSloshMovementMultiplier() * GetHitReactionInputMultiplier() * GetStaffHeftMovementMultiplier());
-	}
+	ApplyDirectionalMovementInput(GetActorForwardVector(), Value);
 }
 
 void AWizardStaffWizardCharacter::MoveRight(float Value)
 {
+	ApplyDirectionalMovementInput(GetActorRightVector(), Value);
+}
+
+void AWizardStaffWizardCharacter::MoveKeyboardForward(float Value)
+{
+	FVector StableForward;
+	FVector StableRight;
+	GetKeyboardMovementBasis(StableForward, StableRight);
+	ApplyDirectionalMovementInput(StableForward, Value);
+}
+
+void AWizardStaffWizardCharacter::MoveKeyboardRight(float Value)
+{
+	FVector StableForward;
+	FVector StableRight;
+	GetKeyboardMovementBasis(StableForward, StableRight);
+	ApplyDirectionalMovementInput(StableRight, Value);
+}
+
+void AWizardStaffWizardCharacter::ApplyDirectionalMovementInput(const FVector& WorldDirection, float Value)
+{
 	if (IsPrototypeInputBlockedForLocalInput())
 	{
 		return;
 	}
 
-	if (!FMath::IsNearlyZero(Value))
+	const FVector PlanarDirection = WorldDirection.GetSafeNormal2D();
+	if (!FMath::IsNearlyZero(Value) && !PlanarDirection.IsNearlyZero())
 	{
 		if (StaffComponent)
 		{
 			StaffComponent->NotifyOwnerMovementInput(FMath::Abs(Value));
 		}
 		const float StaffControlMultiplier = StaffComponent ? StaffComponent->GetControlInputMultiplier() : 1.0f;
-		AddMovementInput(GetActorRightVector(), Value * MoveInputScale * StaffControlMultiplier * GetManaSloshMovementMultiplier() * GetHitReactionInputMultiplier() * GetStaffHeftMovementMultiplier());
+		AddMovementInput(PlanarDirection, Value * MoveInputScale * StaffControlMultiplier * GetManaSloshMovementMultiplier() * GetHitReactionInputMultiplier() * GetStaffHeftMovementMultiplier());
 	}
+}
+
+void AWizardStaffWizardCharacter::GetKeyboardMovementBasis(FVector& OutForward, FVector& OutRight) const
+{
+	float CameraYaw = 0.0f;
+	if (APlayerController* PlayerController = Cast<APlayerController>(GetController()))
+	{
+		FVector ViewLocation;
+		FRotator ViewRotation;
+		PlayerController->GetPlayerViewPoint(ViewLocation, ViewRotation);
+		if (FMath::IsFinite(ViewRotation.Yaw))
+		{
+			CameraYaw = ViewRotation.Yaw;
+		}
+	}
+
+	const FRotationMatrix CameraYawMatrix(FRotator(0.0f, CameraYaw, 0.0f));
+	OutForward = CameraYawMatrix.GetUnitAxis(EAxis::X).GetSafeNormal2D();
+	OutRight = CameraYawMatrix.GetUnitAxis(EAxis::Y).GetSafeNormal2D();
 }
 
 void AWizardStaffWizardCharacter::Turn(float Value)
 {
-	if (IsPrototypeInputBlockedForLocalInput())
-	{
-		return;
-	}
-
-	if (!FMath::IsNearlyZero(Value))
-	{
-		const float DeltaSeconds = GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.0f;
-		const float StaffControlMultiplier = StaffComponent ? StaffComponent->GetControlInputMultiplier() : 1.0f;
-		AddActorWorldRotation(FRotator(0.0f, Value * TurnRateDegreesPerSecond * StaffControlMultiplier * GetManaSloshTurnMultiplier() * GetHitReactionInputMultiplier() * GetStaffHeftTurnMultiplier() * DeltaSeconds, 0.0f));
-		if (!HasAuthority() && IsLocallyControlled())
-		{
-			ServerSetFacingYaw(GetActorRotation().Yaw);
-		}
-
-		const float TargetCarry = Value * ManaTuning.SloshOversteerDegreesPerSecond * GetManaSloshAlpha();
-		SloshTurnCarryDegreesPerSecond = FMath::FInterpTo(SloshTurnCarryDegreesPerSecond, TargetCarry, DeltaSeconds, ManaTuning.SloshOversteerRecoverySpeed);
-	}
+	const float DeltaSeconds = GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.0f;
+	ApplyTurnInput(Value, Value * TurnRateDegreesPerSecond * DeltaSeconds);
 }
 
-void AWizardStaffWizardCharacter::ServerSetFacingYaw_Implementation(float NewYaw)
+void AWizardStaffWizardCharacter::TurnMouse(float Value)
 {
-	if (!HasAuthority() || !FMath::IsFinite(NewYaw) || bPrototypeInputLocked || bStaffClashActive)
+	ApplyTurnInput(Value, Value * MouseTurnDegreesPerAxisUnit);
+}
+
+void AWizardStaffWizardCharacter::ApplyTurnInput(float Value, float TurnDegrees)
+{
+	if (IsPrototypeInputBlockedForLocalInput() || FMath::IsNearlyZero(Value) || FMath::IsNearlyZero(TurnDegrees))
 	{
 		return;
 	}
 
-	AController* OwningController = GetController();
-	if (!OwningController || OwningController->GetPawn() != this)
+	const float StaffControlMultiplier = StaffComponent ? StaffComponent->GetControlInputMultiplier() : 1.0f;
+	ApplyFacingYawDelta(
+		TurnDegrees
+			* StaffControlMultiplier
+			* GetManaSloshTurnMultiplier()
+			* GetHitReactionInputMultiplier()
+			* GetStaffHeftTurnMultiplier());
+
+	const float DeltaSeconds = GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.0f;
+	const float TargetCarry = Value * ManaTuning.SloshOversteerDegreesPerSecond * GetManaSloshAlpha();
+	SloshTurnCarryDegreesPerSecond = FMath::FInterpTo(SloshTurnCarryDegreesPerSecond, TargetCarry, DeltaSeconds, ManaTuning.SloshOversteerRecoverySpeed);
+}
+
+void AWizardStaffWizardCharacter::ApplyFacingYawDelta(float YawDeltaDegrees)
+{
+	if (!FMath::IsFinite(YawDeltaDegrees) || FMath::IsNearlyZero(YawDeltaDegrees))
 	{
 		return;
 	}
 
-	const UWorld* World = GetWorld();
-	const float Now = World ? World->GetTimeSeconds() : 0.0f;
-	if (ServerFacingYawLastUpdateTime < 0.0f)
+	FRotator NewControlRotation = Controller ? Controller->GetControlRotation() : GetActorRotation();
+	NewControlRotation.Pitch = 0.0f;
+	NewControlRotation.Yaw = FRotator::NormalizeAxis(NewControlRotation.Yaw + YawDeltaDegrees);
+	NewControlRotation.Roll = 0.0f;
+	if (Controller)
 	{
-		ServerFacingYawLastUpdateTime = Now;
-		ServerFacingYawTurnAllowanceDegrees = ServerFacingYawMaxBurstDegrees;
+		Controller->SetControlRotation(NewControlRotation);
 	}
-	else
+	FaceRotation(NewControlRotation, 0.0f);
+}
+
+void AWizardStaffWizardCharacter::FaceRotation(FRotator NewControlRotation, float DeltaTime)
+{
+	if (!FMath::IsFinite(NewControlRotation.Yaw))
 	{
-		const float Elapsed = FMath::Max(Now - ServerFacingYawLastUpdateTime, 0.0f);
-		const float StaffControlMultiplier = StaffComponent ? StaffComponent->GetControlInputMultiplier() : 1.0f;
-		const float AllowedTurnRate = FMath::Max(
-			TurnRateDegreesPerSecond
-				* ServerFacingYawMaxInputScale
-				* StaffControlMultiplier
-				* GetManaSloshTurnMultiplier()
-				* GetHitReactionInputMultiplier()
-				* GetStaffHeftTurnMultiplier(),
-			0.0f);
-		ServerFacingYawTurnAllowanceDegrees = FMath::Min(
-			ServerFacingYawMaxBurstDegrees,
-			ServerFacingYawTurnAllowanceDegrees + (AllowedTurnRate * Elapsed));
-		ServerFacingYawLastUpdateTime = Now;
+		return;
 	}
 
 	FRotator NewRotation = GetActorRotation();
 	NewRotation.Pitch = 0.0f;
-	const float RequestedDelta = FMath::FindDeltaAngleDegrees(NewRotation.Yaw, FRotator::NormalizeAxis(NewYaw));
-	const float AppliedDelta = FMath::Clamp(
-		RequestedDelta,
-		-ServerFacingYawTurnAllowanceDegrees,
-		ServerFacingYawTurnAllowanceDegrees);
-	NewRotation.Yaw = FRotator::NormalizeAxis(NewRotation.Yaw + AppliedDelta);
 	NewRotation.Roll = 0.0f;
+	const float RequestedDelta = FMath::FindDeltaAngleDegrees(NewRotation.Yaw, FRotator::NormalizeAxis(NewControlRotation.Yaw));
+	float AppliedDelta = RequestedDelta;
+
+	const AController* OwningController = GetController();
+	if (HasAuthority() && OwningController && !OwningController->IsLocalController())
+	{
+		const UWorld* World = GetWorld();
+		const float Now = World ? World->GetTimeSeconds() : 0.0f;
+		if (ServerFacingYawLastUpdateTime < 0.0f)
+		{
+			ServerFacingYawLastUpdateTime = Now;
+			ServerFacingYawTurnAllowanceDegrees = ServerFacingYawMaxBurstDegrees;
+		}
+		else
+		{
+			const float Elapsed = FMath::Max(Now - ServerFacingYawLastUpdateTime, 0.0f);
+			const float StaffControlMultiplier = StaffComponent ? StaffComponent->GetControlInputMultiplier() : 1.0f;
+			const float AllowedTurnRate = FMath::Max(
+				TurnRateDegreesPerSecond
+					* ServerFacingYawMaxInputScale
+					* StaffControlMultiplier
+					* GetManaSloshTurnMultiplier()
+					* GetHitReactionInputMultiplier()
+					* GetStaffHeftTurnMultiplier(),
+				0.0f);
+			ServerFacingYawTurnAllowanceDegrees = FMath::Min(
+				ServerFacingYawMaxBurstDegrees,
+				ServerFacingYawTurnAllowanceDegrees + (AllowedTurnRate * Elapsed));
+			ServerFacingYawLastUpdateTime = Now;
+		}
+
+		AppliedDelta = FMath::Clamp(
+			RequestedDelta,
+			-ServerFacingYawTurnAllowanceDegrees,
+			ServerFacingYawTurnAllowanceDegrees);
+		ServerFacingYawTurnAllowanceDegrees = FMath::Max(
+			0.0f,
+			ServerFacingYawTurnAllowanceDegrees - FMath::Abs(AppliedDelta));
+	}
+
+	NewRotation.Yaw = FRotator::NormalizeAxis(NewRotation.Yaw + AppliedDelta);
 	SetActorRotation(NewRotation);
-	ServerFacingYawTurnAllowanceDegrees = FMath::Max(0.0f, ServerFacingYawTurnAllowanceDegrees - FMath::Abs(AppliedDelta));
 }
 
 void AWizardStaffWizardCharacter::OnRep_ReplicatedStaffSegmentCount()
@@ -2645,11 +2721,7 @@ void AWizardStaffWizardCharacter::UpdateManaSlosh(float DeltaSeconds)
 
 	if (!FMath::IsNearlyZero(SloshTurnCarryDegreesPerSecond))
 	{
-		AddActorWorldRotation(FRotator(0.0f, SloshTurnCarryDegreesPerSecond * DeltaSeconds, 0.0f));
-		if (!HasAuthority() && IsLocallyControlled())
-		{
-			ServerSetFacingYaw(GetActorRotation().Yaw);
-		}
+		ApplyFacingYawDelta(SloshTurnCarryDegreesPerSecond * DeltaSeconds);
 		SloshTurnCarryDegreesPerSecond = FMath::FInterpTo(SloshTurnCarryDegreesPerSecond, 0.0f, DeltaSeconds, ManaTuning.SloshOversteerRecoverySpeed);
 	}
 

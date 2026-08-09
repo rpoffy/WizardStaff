@@ -71,5 +71,6 @@ public:
 protected:
 	void ApplyToLocalPlayerControllers();
 	bool GetLocalPlayerBounds(FVector& OutCenter, float& OutRadius) const;
-	void AddPawnTrackingPoints(const APawn* Pawn, TArray<FVector>& OutLocations, float& InOutExtraZoom) const;
+	bool GetPartyHallFallCameraThreshold(float& OutIgnoreBelowZ) const;
+	void AddPawnTrackingPoints(const APawn* Pawn, TArray<FVector>& OutLocations, float& InOutExtraZoom, bool bIgnoreFallenPartyHallWizard, float PartyHallIgnoreBelowZ) const;
 };
