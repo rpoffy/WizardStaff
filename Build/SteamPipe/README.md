@@ -209,6 +209,18 @@ Latest inactive stable-WASD candidate on 2026-08-04:
 - `SetLive` remained empty; no Steam branch changed during upload. Assign only to password-protected `private_test`; do not alter `default`.
 - Required human checks: hold each WASD direction while sweeping mouse aim through a full turn, check diagonals and bonking while strafing, then repeat with Slosh and in both host/joiner roles.
 
+Latest inactive multiplayer-audit candidate on 2026-08-09:
+
+- Steam Build ID: `24636896`.
+- Depot manifest ID: `6258159125079210188`.
+- Description: `Wizard Staff multiplayer audit hardening private test 2026-08-09`.
+- Source checkpoint: Git commit `8c2a1d7` on `agent/private-playtest-24238419`.
+- UE 5.7 Win64 Development build, cook, stage, archive, staging refresh, and SteamPipe upload completed successfully.
+- SteamPipe staging contained 44 files totaling 531,905,814 bytes and no `.pdb`, `steam_appid.txt`, `Manifest_*.txt`, `.gitkeep`, or Saved data.
+- The candidate contains the completed multiplayer audit fixes for version compatibility, departure/rejoin cleanup, remote vial-segment readability, online snap cosmetics, and the owner-only Steam leaderboard submission boundary.
+- `SetLive` remained empty; no Steam branch changed during upload. Assign only to password-protected `private_test`; do not alter `default`.
+- Required human checks are the focused items in `Docs/PLAYTEST_PLAN.md`, especially active-Trial departure/rejoin, mixed vial segment colors, one snap cue per machine, and one leaderboard write/flush per authenticated human owner.
+
 ## Sources Checked
 
 - Valve SteamPipe upload/build script documentation: https://partner.steamgames.com/doc/sdk/uploading
