@@ -221,6 +221,16 @@ Latest inactive multiplayer-audit candidate on 2026-08-09:
 - `SetLive` remained empty; no Steam branch changed during upload. Assign only to password-protected `private_test`; do not alter `default`.
 - Required human checks are the focused items in `Docs/PLAYTEST_PLAN.md`, especially active-Trial departure/rejoin, mixed vial segment colors, one snap cue per machine, and one leaderboard write/flush per authenticated human owner.
 
+Replacement Steam compatibility-filter hotfix on 2026-08-09:
+
+- Steam Build ID: `24643002`.
+- Depot manifest ID: `2340349704874284922`.
+- Description: `Wizard Staff Steam compatibility filter hotfix 2026-08-09`.
+- Build `24636896` found the same readable version/checksum string on both machines, but Steam translated the lobby result's numeric `BuildUniqueId`; the strict numeric comparison falsely rejected a valid match.
+- Search now requires exact project map and readable version/checksum metadata, treats the numeric field as diagnostic, and leaves Unreal's connection handshake as the protocol guard.
+- UE 5.7 Win64 Development build, cook, stage, archive, staging refresh, and inactive SteamPipe upload completed successfully. `SetLive` remained empty.
+- Assign this replacement only to `private_test`, update both accounts, and repeat host/join in both directions.
+
 ## Sources Checked
 
 - Valve SteamPipe upload/build script documentation: https://partner.steamgames.com/doc/sdk/uploading

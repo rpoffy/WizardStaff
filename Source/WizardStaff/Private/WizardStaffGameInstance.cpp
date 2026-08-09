@@ -1034,9 +1034,14 @@ void UWizardStaffGameInstance::OnFindSteamSmokeSessionsComplete(bool bWasSuccess
 			SearchResult.PingInMs);
 
 		if (ResultMap == WizardSteamPrototypeMapPath
-			&& ResultBuild == LocalBuildValue
-			&& ResultBuildUniqueId == LocalBuildUniqueId)
+			&& ResultBuild == LocalBuildValue)
 		{
+			if (ResultBuildUniqueId != LocalBuildUniqueId)
+			{
+				UE_LOG(LogTemp, Log, TEXT("WizardSteamJoinFirstSession accepting versioned metadata match despite Steam result BuildUniqueId translation: result=%d local=%d."),
+					ResultBuildUniqueId,
+					LocalBuildUniqueId);
+			}
 			SelectedResultIndex = ResultIndex;
 			break;
 		}

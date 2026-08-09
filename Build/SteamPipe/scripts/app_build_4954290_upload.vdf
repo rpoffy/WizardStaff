@@ -1,7 +1,7 @@
 "AppBuild"
 {
     "AppID" "4954290"
-    "Desc" "Wizard Staff multiplayer audit hardening private test 2026-08-09"
+    "Desc" "Wizard Staff Steam compatibility filter hotfix 2026-08-09"
 
     // Approved upload. This creates an inactive Steamworks build.
     "Preview" "0"
